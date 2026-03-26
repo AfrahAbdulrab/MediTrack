@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "MediTrack",
+    "slug": "finalyearproject",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": ["android"],
+    "plugins": [
+      "expo-router",
+      [
+        "react-native-health-connect",
+        {
+          "permissions": [
+            "ReadHeartRate",
+            "ReadOxygenSaturation",
+            "ReadSteps"
+          ]
+        }
+      ]
+    ],
+    "android": {
+      "package": "com.anonymous.finalyearproject",
+      "permissions": [
+        "android.permission.health.READ_HEART_RATE",
+        "android.permission.health.READ_OXYGEN_SATURATION",
+        "android.permission.health.READ_STEPS"
+      ]
+    }
+  }
+}
