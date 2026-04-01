@@ -23,7 +23,7 @@ import {
   CheckCircle,
 } from "lucide-react-native";
 
-const API_URL = 'http://192.168.100.21:5000/api/contact';
+const API_URL = 'http://192.168.1.8:5000/api/contact';
 
 export default function ContactSupport() {
   const router = useRouter();
