@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
-const API_URL = 'http://192.168.1.9:5000/api/auth';
+const API_URL = 'http://192.168.1.5:5000/api/auth';
 
 export default function SignIn() {
   const [email, setEmail] = useState('');

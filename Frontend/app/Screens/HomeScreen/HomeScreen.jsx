@@ -31,7 +31,6 @@ export default function HomeScreen({ route }) {
   const router = useRouter();
   const params = useLocalSearchParams();
 
-  // ✅ Real watch data
   const { heartRate, spo2, steps, restingHeartRate } = useWearData();
 
   const [username, setUsername] = useState("User");
@@ -42,7 +41,6 @@ export default function HomeScreen({ route }) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [menuVisible, setMenuVisible] = useState(false);
 
-  // ✅ Sab null — real data aane tak -- dikhega
   const [vitals, setVitals] = useState({
     heartRate:   null,
     temperature: null,
@@ -54,7 +52,6 @@ export default function HomeScreen({ route }) {
   const [riskLevel, setRiskLevel] = useState("low");
   const [recommendations, setRecommendations] = useState([]);
 
-  // ✅ Load profile + auto sync on mount
   useEffect(() => {
     loadUserData();
   }, []);
@@ -70,7 +67,7 @@ export default function HomeScreen({ route }) {
       const data = await response.json();
 
       if (data?.user) {
-        setUsername(data.user.name || 'User');
+        setUsername(data.user.username || data.user.name || 'User');
         setEmail(data.user.email || '');
         setUserProfile(data.user);
 
@@ -83,7 +80,6 @@ export default function HomeScreen({ route }) {
           height: parseFloat(data.user.height) || 170,
         };
 
-        // ✅ Teeno diseases sync
         await Promise.allSettled([
           syncHealthData(profile, 'Hypertension'),
           syncHealthData(profile, 'TachyBrady'),
@@ -100,7 +96,6 @@ export default function HomeScreen({ route }) {
     }
   };
 
-  // ✅ Real watch data update karo
   useEffect(() => {
     if (heartRate) {
       setVitals(prev => ({
@@ -119,7 +114,6 @@ export default function HomeScreen({ route }) {
     }
   }, [heartRate, spo2, steps]);
 
-  // ✅ Temperature — realistic variation
   useEffect(() => {
     setVitals(prev => ({ ...prev, temperature: 98.6 }));
     const interval = setInterval(() => {
@@ -133,7 +127,6 @@ export default function HomeScreen({ route }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Params update
   useEffect(() => {
     const updateUserData = async () => {
       if (params?.username) { setUsername(params.username); await AsyncStorage.setItem('username', params.username); }
@@ -144,18 +137,15 @@ export default function HomeScreen({ route }) {
     updateUserData();
   }, [params, route?.params]);
 
-  // Clock
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Health analysis
   useEffect(() => {
     analyzeHealthStatus();
   }, [vitals, vitalHistory]);
 
-  // ✅ Ranges
   const ranges = {
     heartRate:   { min: 60,   max: 100,   warning: { min: 50,   max: 110   } },
     temperature: { min: 97.0, max: 99.0,  warning: { min: 96.0, max: 100.4 } },
@@ -261,7 +251,7 @@ export default function HomeScreen({ route }) {
             <Text style={styles.avatarText}>{username.charAt(0).toUpperCase()}</Text>
           </View>
           <View style={styles.welcomeTextContainer}>
-            <Text style={styles.welcomeName}>Welcome back, {username}</Text>
+            <Text style={styles.welcomeName}>{username}</Text>
             <Text style={styles.welcomeDate}>
               {currentTime.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
             </Text>

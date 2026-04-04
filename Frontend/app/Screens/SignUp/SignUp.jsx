@@ -4,8 +4,8 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 const { width, height } = Dimensions.get('window');
-const API_URL = 'http://192.168.1.9:5000/api/auth';
-const BASE_URL = 'http://192.168.1.9:5000';
+const API_URL = 'http://192.168.1.3:5000/api/auth';
+const BASE_URL = 'http://192.168.1.3:5000';
 export default function SignUp() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
