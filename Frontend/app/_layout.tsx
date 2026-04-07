@@ -1,6 +1,13 @@
 import { Stack } from "expo-router";
+import { useEffect } from "react";
+import { configureBackgroundFetch, testBackgroundSync } from '../hooks/useBackgroundSync';
 
 export default function RootLayout() {
+  useEffect(() => {
+    configureBackgroundFetch();
+    testBackgroundSync();
+  }, []);
+
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Screens/LOGO/LOGO" />

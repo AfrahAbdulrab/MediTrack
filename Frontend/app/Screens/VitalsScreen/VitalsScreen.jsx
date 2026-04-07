@@ -13,9 +13,12 @@ import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Footer from "../components/Footer";
 import { useWearData } from '../../../hooks/useWearData';
+import { API_BASE_URL } from '../../constants/constants';
 
 const { width } = Dimensions.get("window");
-const API_URL = 'http://192.168.1.9:5000/api/vitals';
+
+// ─── 10 minutes in milliseconds ──────────────────────────────────────────────
+const TEN_MINUTES = 10 * 60 * 1000;
 
 const getBMIStatus = (bmi) => {
   if (!bmi) return { label: 'N/A', color: '#6B7280', bg: '#F3F4F6' };
@@ -45,7 +48,17 @@ const getAccelColor = (intensity) => {
 
 export default function Vitals() {
   const router = useRouter();
-  const { heartRate, spo2, steps, restingHeartRate, bmi, accelerometer, askPermissions } = useWearData();
+  const {
+    heartRate,
+    lastHeartRateTime,
+    lastSyncedTime,     // ✅ NEW - Samsung Health ka actual last sync time
+    spo2,
+    steps,
+    restingHeartRate,
+    bmi,
+    accelerometer,
+    askPermissions,
+  } = useWearData();
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isWatchConnected, setIsWatchConnected] = useState(false);
@@ -60,31 +73,59 @@ export default function Vitals() {
     accelerometer: { x: 0, y: 9.8, z: 0, intensity: 'Still' },
   });
 
+  // ✅ Watch connected check — agar last reading 10 min se purani ho toh Offline
   useEffect(() => {
-    if (heartRate) {
-      setIsWatchConnected(true);
-      setVitals((prev) => ({
-        ...prev,
-        heartRate,
-        oxygenLevel: spo2 || prev.oxygenLevel,
-        footsteps: steps || prev.footsteps,
-        restingHeartRate: restingHeartRate || prev.restingHeartRate,
-        bmi: bmi || prev.bmi,
-        accelerometer: accelerometer || prev.accelerometer,
-      }));
-      saveVitalsToBackend(heartRate, spo2 || 0, steps || 0, restingHeartRate || 0);
-    } else {
-      setIsWatchConnected(false);
-      setVitals((prev) => ({
-        ...prev,
-        bmi: bmi || prev.bmi,
-        accelerometer: accelerometer || prev.accelerometer,
-        restingHeartRate: restingHeartRate || prev.restingHeartRate,
-      }));
-      fetchLastSavedVitals();
-    }
-  }, [heartRate, spo2, steps, restingHeartRate, bmi, accelerometer]);
+    const checkConnection = () => {
+      if (heartRate && lastHeartRateTime) {
+        const diffMs = new Date() - new Date(lastHeartRateTime);
+        const isRecent = diffMs < TEN_MINUTES;
 
+        if (isRecent) {
+          setIsWatchConnected(true);
+          setVitals((prev) => ({
+            ...prev,
+            heartRate: heartRate,
+            oxygenLevel: spo2 || prev.oxygenLevel,
+            footsteps: steps || prev.footsteps,
+            restingHeartRate: restingHeartRate || prev.restingHeartRate,
+            bmi: bmi || prev.bmi,
+            accelerometer: accelerometer || prev.accelerometer,
+          }));
+          saveVitalsToBackend(heartRate, spo2 || 0, steps || 0, restingHeartRate || 0);
+        } else {
+          setIsWatchConnected(false);
+          setVitals((prev) => ({
+            ...prev,
+            heartRate: heartRate,
+            oxygenLevel: spo2 || prev.oxygenLevel,
+            footsteps: steps || prev.footsteps,
+            restingHeartRate: restingHeartRate || prev.restingHeartRate,
+            bmi: bmi || prev.bmi,
+            accelerometer: accelerometer || prev.accelerometer,
+          }));
+          fetchLastSavedVitals();
+        }
+      } else {
+        setIsWatchConnected(false);
+        fetchLastSavedVitals();
+      }
+    };
+
+    checkConnection();
+  }, [heartRate, lastHeartRateTime, spo2, steps, restingHeartRate, bmi, accelerometer]);
+
+  // ✅ Har minute connected status refresh
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (lastHeartRateTime) {
+        const diffMs = new Date() - new Date(lastHeartRateTime);
+        setIsWatchConnected(diffMs < TEN_MINUTES);
+      }
+    }, 60 * 1000);
+    return () => clearInterval(interval);
+  }, [lastHeartRateTime]);
+
+  // Temperature simulate
   useEffect(() => {
     const interval = setInterval(() => {
       setVitals((prev) => ({
@@ -95,6 +136,7 @@ export default function Vitals() {
     return () => clearInterval(interval);
   }, []);
 
+  // Clock
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
@@ -103,7 +145,7 @@ export default function Vitals() {
   const saveVitalsToBackend = async (hr, oxygen, stepsCount, rhr) => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      await fetch(`${API_URL}/record`, {
+      await fetch(`${API_BASE_URL}/api/vitals/record`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -120,7 +162,7 @@ export default function Vitals() {
   const fetchLastSavedVitals = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch(`${API_URL}/latest`, {
+      const response = await fetch(`${API_BASE_URL}/api/vitals/latest`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
@@ -128,11 +170,10 @@ export default function Vitals() {
         setLastSavedData(data.data);
         setVitals((prev) => ({
           ...prev,
-          heartRate: data.data.heartRate,
-          temperature: data.data.temperature,
-          oxygenLevel: data.data.bloodOxygen,
-          footsteps: data.data.footsteps || 0,
-          restingHeartRate: data.data.restingHeartRate || 0,
+          heartRate: data.data.heartRate || prev.heartRate,
+          oxygenLevel: data.data.bloodOxygen || prev.oxygenLevel,
+          footsteps: data.data.footsteps || prev.footsteps,
+          restingHeartRate: data.data.restingHeartRate || prev.restingHeartRate,
         }));
       }
     } catch (error) { console.log('Fetch error:', error); }
@@ -141,12 +182,16 @@ export default function Vitals() {
   const formatTime = () =>
     currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
+  // ✅ UPDATED: lastSyncedTime ko priority do, fallback backend timestamp
   const formatLastSavedTime = (timestamp) => {
     if (!timestamp) return '';
     return new Date(timestamp).toLocaleString('en-US', {
       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
     });
   };
+
+  // ✅ Jo bhi latest ho — Samsung Health sync ya backend
+  const displayTimestamp = lastSyncedTime ?? lastSavedData?.timestamp ?? null;
 
   const bmiStatus = getBMIStatus(vitals.bmi);
   const rhrStatus = getRHRStatus(vitals.restingHeartRate);
@@ -166,23 +211,32 @@ export default function Vitals() {
           <TouchableOpacity onPress={askPermissions} style={styles.allowButton}>
             <Text style={styles.allowButtonText}>Allow</Text>
           </TouchableOpacity>
-          {isWatchConnected ? <Wifi size={20} color="#10B981" /> : <WifiOff size={20} color="#EF4444" />}
+          {isWatchConnected
+            ? <Wifi size={20} color="#10B981" />
+            : <WifiOff size={20} color="#EF4444" />
+          }
         </View>
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}>
 
+        {/* ✅ Offline banner */}
         {!isWatchConnected && (
           <View style={styles.offlineBanner}>
             <WifiOff size={16} color="#fff" />
-            <Text style={styles.offlineBannerText}>Watch Not Connected — Showing Last Saved Data</Text>
+            <Text style={styles.offlineBannerText}>
+              Watch Not Connected — Showing Last Saved Data
+            </Text>
           </View>
         )}
 
-        {!isWatchConnected && lastSavedData && (
+        {/* ✅ UPDATED: lastSyncedTime priority, fallback to backend timestamp */}
+        {displayTimestamp && (
           <View style={styles.timestampBanner}>
-            <Text style={styles.timestampText}>📅 Last saved: {formatLastSavedTime(lastSavedData.timestamp)}</Text>
+            <Text style={styles.timestampText}>
+              📅 Last saved: {formatLastSavedTime(displayTimestamp)}
+            </Text>
           </View>
         )}
 
@@ -193,23 +247,34 @@ export default function Vitals() {
               <Heart size={20} color="#EF4444" />
               <Text style={styles.heartRateTitle}>Heart Rate</Text>
             </View>
-            <View style={[styles.statusBadge, { backgroundColor: isWatchConnected ? '#D1FAE5' : '#FEE2E2' }]}>
-              <View style={[styles.statusDot, { backgroundColor: isWatchConnected ? '#10B981' : '#EF4444' }]} />
-              <Text style={[styles.statusBadgeText, { color: isWatchConnected ? '#10B981' : '#EF4444' }]}>
+            <View style={[styles.statusBadge, {
+              backgroundColor: isWatchConnected ? '#D1FAE5' : '#FEE2E2'
+            }]}>
+              <View style={[styles.statusDot, {
+                backgroundColor: isWatchConnected ? '#10B981' : '#EF4444'
+              }]} />
+              <Text style={[styles.statusBadgeText, {
+                color: isWatchConnected ? '#10B981' : '#EF4444'
+              }]}>
                 {isWatchConnected ? 'Live' : 'Offline'}
               </Text>
             </View>
           </View>
+
           <View style={styles.heartRateDisplay}>
-            <Text style={styles.heartRateValue}>{Math.round(vitals.heartRate)}</Text>
+            <Text style={styles.heartRateValue}>{Math.round(vitals.heartRate) || 0}</Text>
             <Text style={styles.heartRateUnit}>BPM</Text>
           </View>
-          {!isWatchConnected && lastSavedData && (
+
+          {/* ✅ UPDATED: displayTimestamp use karo */}
+          {!isWatchConnected && displayTimestamp && (
             <View style={styles.offlineDataRow}>
               <View style={styles.offlineDataBadge}>
                 <Text style={styles.offlineDataBadgeText}>OFFLINE</Text>
               </View>
-              <Text style={styles.offlineDataTime}>Data until: {formatLastSavedTime(lastSavedData.timestamp)}</Text>
+              <Text style={styles.offlineDataTime}>
+                Data until: {formatLastSavedTime(displayTimestamp)}
+              </Text>
             </View>
           )}
         </View>
@@ -230,12 +295,15 @@ export default function Vitals() {
               <Wind size={24} color="#3B82F6" />
             </View>
             <View style={styles.oxygenDisplay}>
-              <Text style={styles.statValue}>{Math.round(vitals.oxygenLevel)}</Text>
+              <Text style={styles.statValue}>{Math.round(vitals.oxygenLevel) || 0}</Text>
               <Text style={styles.percentSymbol}>%</Text>
             </View>
             <Text style={styles.statLabel}>Oxygen Level</Text>
             <View style={[styles.progressBar, { backgroundColor: '#93C5FD' }]}>
-              <View style={[styles.progressFill, { width: `${vitals.oxygenLevel}%`, backgroundColor: '#3B82F6' }]} />
+              <View style={[styles.progressFill, {
+                width: `${vitals.oxygenLevel || 0}%`,
+                backgroundColor: '#3B82F6',
+              }]} />
             </View>
           </View>
         </View>
@@ -248,7 +316,7 @@ export default function Vitals() {
                 <Footprints size={24} color="#10B981" />
               </View>
               <View style={styles.footstepsTextBlock}>
-                <Text style={styles.footstepsValue}>{vitals.footsteps.toLocaleString()}</Text>
+                <Text style={styles.footstepsValue}>{(vitals.footsteps || 0).toLocaleString()}</Text>
                 <Text style={styles.statLabel}>Footsteps Today</Text>
               </View>
             </View>
@@ -308,23 +376,20 @@ export default function Vitals() {
             </View>
 
             <View style={styles.accelAxesRow}>
-              <View style={styles.accelAxis}>
-                <Text style={[styles.accelAxisLabel, { color: '#EF4444' }]}>X</Text>
-                <Text style={styles.accelAxisValue}>{vitals.accelerometer?.x?.toFixed(2) ?? '0.00'}</Text>
-                <Text style={styles.accelUnit}>m/s²</Text>
-              </View>
-              <View style={styles.accelAxisDivider} />
-              <View style={styles.accelAxis}>
-                <Text style={[styles.accelAxisLabel, { color: '#10B981' }]}>Y</Text>
-                <Text style={styles.accelAxisValue}>{vitals.accelerometer?.y?.toFixed(2) ?? '9.80'}</Text>
-                <Text style={styles.accelUnit}>m/s²</Text>
-              </View>
-              <View style={styles.accelAxisDivider} />
-              <View style={styles.accelAxis}>
-                <Text style={[styles.accelAxisLabel, { color: '#3B82F6' }]}>Z</Text>
-                <Text style={styles.accelAxisValue}>{vitals.accelerometer?.z?.toFixed(2) ?? '0.00'}</Text>
-                <Text style={styles.accelUnit}>m/s²</Text>
-              </View>
+              {[
+                { label: 'X', color: '#EF4444', val: vitals.accelerometer?.x },
+                { label: 'Y', color: '#10B981', val: vitals.accelerometer?.y },
+                { label: 'Z', color: '#3B82F6', val: vitals.accelerometer?.z },
+              ].map((axis, i) => (
+                <React.Fragment key={axis.label}>
+                  {i > 0 && <View style={styles.accelAxisDivider} />}
+                  <View style={styles.accelAxis}>
+                    <Text style={[styles.accelAxisLabel, { color: axis.color }]}>{axis.label}</Text>
+                    <Text style={styles.accelAxisValue}>{axis.val?.toFixed(2) ?? '0.00'}</Text>
+                    <Text style={styles.accelUnit}>m/s²</Text>
+                  </View>
+                </React.Fragment>
+              ))}
             </View>
 
             <View style={styles.intensityBarContainer}>
@@ -337,28 +402,31 @@ export default function Vitals() {
                 }]} />
               </View>
               <View style={styles.intensityLabels}>
-                <Text style={styles.intensityLabelText}>Still</Text>
-                <Text style={styles.intensityLabelText}>Light</Text>
-                <Text style={styles.intensityLabelText}>Moderate</Text>
-                <Text style={styles.intensityLabelText}>Active</Text>
+                {['Still', 'Light', 'Moderate', 'Active'].map((l) => (
+                  <Text key={l} style={styles.intensityLabelText}>{l}</Text>
+                ))}
               </View>
             </View>
           </View>
         </View>
 
-        {/* Status Card */}
-        <View style={styles.statusCard}>
+        {/* ✅ UPDATED: Status Card — displayTimestamp use karo */}
+        <View style={[styles.statusCard, {
+          backgroundColor: isWatchConnected ? '#D1FAE5' : '#FEE2E2'
+        }]}>
           <View style={styles.statusIcon}>
-            <Heart size={32} color="#10B981" />
+            <Heart size={32} color={isWatchConnected ? '#10B981' : '#EF4444'} />
           </View>
-          <Text style={styles.statusTitle}>
-            {isWatchConnected ? 'All Vitals Normal' : 'Watch Disconnected'}
+          <Text style={[styles.statusTitle, {
+            color: isWatchConnected ? '#10B981' : '#EF4444'
+          }]}>
+            {isWatchConnected ? 'Watch Connected — Live' : 'Watch Disconnected'}
           </Text>
           <Text style={styles.statusSubtitle}>
             {isWatchConnected
               ? `Live data — updated at ${formatTime()}`
-              : lastSavedData
-                ? `Data until: ${formatLastSavedTime(lastSavedData.timestamp)}`
+              : displayTimestamp
+                ? `Last data: ${formatLastSavedTime(displayTimestamp)}`
                 : 'No saved data found'}
           </Text>
         </View>
@@ -396,7 +464,7 @@ const styles = StyleSheet.create({
   scrollView: { flex: 1 },
   heartRateCard: {
     backgroundColor: '#1F2937', borderRadius: 16, padding: 20, margin: 16, marginBottom: 12,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 4,
+    elevation: 4,
   },
   heartRateHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   heartRateTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -412,10 +480,7 @@ const styles = StyleSheet.create({
   offlineDataBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
   offlineDataTime: { color: '#9CA3AF', fontSize: 12, fontWeight: '500' },
   statsGrid: { flexDirection: 'row', paddingHorizontal: 16, gap: 12, marginBottom: 12 },
-  statCard: {
-    flex: 1, borderRadius: 16, padding: 16, alignItems: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2,
-  },
+  statCard: { flex: 1, borderRadius: 16, padding: 16, alignItems: 'center', elevation: 2 },
   statIconContainer: {
     width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.5)',
     justifyContent: 'center', alignItems: 'center', marginBottom: 12,
@@ -429,17 +494,11 @@ const styles = StyleSheet.create({
   progressBar: { width: '100%', height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3 },
   footstepsRow: { paddingHorizontal: 16, marginBottom: 12 },
-  footstepsCard: {
-    borderRadius: 16, padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2,
-  },
+  footstepsCard: { borderRadius: 16, padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', elevation: 2 },
   footstepsLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   footstepsTextBlock: { flexDirection: 'column' },
   footstepsValue: { fontSize: 28, fontWeight: 'bold', color: '#111827' },
-  accelCard: {
-    borderRadius: 16, padding: 16,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2,
-  },
+  accelCard: { borderRadius: 16, padding: 16, elevation: 2 },
   accelHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   accelTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
   accelAxesRow: {
@@ -457,14 +516,13 @@ const styles = StyleSheet.create({
   intensityLabels: { flexDirection: 'row', justifyContent: 'space-between' },
   intensityLabelText: { fontSize: 10, color: '#9CA3AF' },
   statusCard: {
-    backgroundColor: '#D1FAE5', borderRadius: 16, padding: 24,
-    marginHorizontal: 16, marginBottom: 12, alignItems: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2,
+    borderRadius: 16, padding: 24, marginHorizontal: 16, marginBottom: 12,
+    alignItems: 'center', elevation: 2,
   },
   statusIcon: {
     width: 64, height: 64, borderRadius: 32, backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center', marginBottom: 12,
   },
-  statusTitle: { fontSize: 20, fontWeight: 'bold', color: '#10B981', marginBottom: 4 },
+  statusTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 4 },
   statusSubtitle: { fontSize: 12, color: '#6B7280' },
 });

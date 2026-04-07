@@ -263,4 +263,23 @@ router.post("/upload-profile-image", authenticateToken, upload.single('profileIm
   }
 });
 
+// ===== ✅ NEW: SAVE EXPO PUSH TOKEN =====
+router.post("/save-push-token", authenticateToken, async (req, res) => {
+  try {
+    const { expoPushToken } = req.body;
+    
+    if (!expoPushToken) {
+      return res.status(400).json({ message: "Token required" });
+    }
+
+    await User.findByIdAndUpdate(req.userId, { expoPushToken });
+    console.log(`✅ Push token saved for user: ${req.userId}`);
+    
+    res.json({ success: true, message: "Push token saved successfully" });
+  } catch (error) {
+    console.error("Save push token error:", error);
+    res.status(500).json({ message: "Failed to save token", error: error.message });
+  }
+});
+
 module.exports = router;

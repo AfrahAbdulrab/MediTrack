@@ -15,16 +15,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import axios from "axios";
+import { API_BASE_URL } from '../../constants/constants'; // ✅ FIX: constants se lo
 
-// 🔥 FIXED API URL
-const API_BASE = "http://172.21.247.68:5000/api/emergency-contacts";
+// ✅ FIX: Ab hardcoded IP nahi — constants se aayega
+const API_BASE = `${API_BASE_URL}/api/emergency-contacts`;
 
-// 🆔 Your User ID (change this to match your actual user)
-const USER_ID = "690c4c93f611241fa1fc43f5";
-
+// ✅ FIX: USER_ID hardcode nahi — AsyncStorage se aayega
 export default function EmergencyContact() {
   const router = useRouter();
 
+  const [userId, setUserId] = useState(null); // ✅ NEW
   const [modalVisible, setModalVisible] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [selectedContact, setSelectedContact] = useState(null);
@@ -37,19 +37,38 @@ export default function EmergencyContact() {
   const [refreshing, setRefreshing] = useState(false);
   const [sendingAlert, setSendingAlert] = useState(false);
 
-  // Load contacts from backend
+  // ✅ NEW: AsyncStorage se userId aur token lo
   useEffect(() => {
-    fetchContacts();
+    const loadUserAndContacts = async () => {
+      try {
+        const token = await AsyncStorage.getItem('userToken');
+        if (token) {
+          // Token se userId decode karo
+          const base64Url = token.split('.')[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const jsonPayload = decodeURIComponent(
+            atob(base64).split('').map(c =>
+              '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+            ).join('')
+          );
+          const decoded = JSON.parse(jsonPayload);
+          const uid = decoded.userId;
+          setUserId(uid);
+          fetchContacts(uid);
+        }
+      } catch (err) {
+        console.log('❌ Error loading user:', err);
+      }
+    };
+    loadUserAndContacts();
   }, []);
 
-  // 🔥 Save contacts to AsyncStorage whenever contacts change
   useEffect(() => {
     if (contacts.length >= 0) {
       saveToAsyncStorage(contacts);
     }
   }, [contacts]);
 
-  // 💾 Save to AsyncStorage for AIHealthScreen
   const saveToAsyncStorage = async (contactsList) => {
     try {
       const formattedContacts = contactsList.map(contact => ({
@@ -57,7 +76,6 @@ export default function EmergencyContact() {
         phone: contact.phone,
         relationship: contact.relationship
       }));
-      
       await AsyncStorage.setItem('emergencyContacts', JSON.stringify(formattedContacts));
       console.log('✅ Saved to AsyncStorage:', formattedContacts.length, 'contacts');
     } catch (error) {
@@ -65,30 +83,22 @@ export default function EmergencyContact() {
     }
   };
 
-  // 📥 Fetch all contacts from backend
-  const fetchContacts = async () => {
+  const fetchContacts = async (uid) => {
+    const id = uid || userId;
+    if (!id) return;
     try {
       setLoading(true);
-      console.log(`📥 Fetching contacts for user: ${USER_ID}`);
-      
-      const response = await axios.get(`${API_BASE}/user/${USER_ID}`);
-      
+      console.log(`📥 Fetching contacts for user: ${id}`);
+      const response = await axios.get(`${API_BASE}/user/${id}`);
       console.log('✅ Response:', response.data);
-      
       if (response.data.success) {
         setContacts(response.data.contacts);
         await saveToAsyncStorage(response.data.contacts);
       }
     } catch (err) {
       console.log("❌ Error fetching contacts:", err);
-      
-      if (err.response) {
-        console.log("Error response:", err.response.data);
-      } else if (err.request) {
-        Alert.alert(
-          "Connection Error",
-          "Cannot connect to server. Check IP and backend."
-        );
+      if (err.request) {
+        Alert.alert("Connection Error", "Cannot connect to server. Check IP and backend.");
       }
     } finally {
       setLoading(false);
@@ -96,15 +106,14 @@ export default function EmergencyContact() {
     }
   };
 
-  // 🚨 NEW: Send Emergency Alert to ALL Contacts
   const sendEmergencyAlertToAll = async () => {
+    if (!userId) return;
     try {
       setSendingAlert(true);
       console.log('🚨 Sending emergency alert to all contacts...');
 
-      // Step 1: Backend se saare contacts fetch karo
       const response = await axios.post(`${API_BASE}/send-alert`, {
-        userId: USER_ID,
+        userId: userId,
         alertMessage: "🚨 HEALTH ALERT: Abnormal vitals detected! Please check immediately.",
         vitalsData: {
           timestamp: new Date().toISOString(),
@@ -114,7 +123,7 @@ export default function EmergencyContact() {
 
       if (response.data.success) {
         const { contacts: alertContacts, alertMessage } = response.data;
-        
+
         if (alertContacts.length === 0) {
           Alert.alert("No Contacts", "Please add emergency contacts first.");
           return;
@@ -122,30 +131,25 @@ export default function EmergencyContact() {
 
         console.log(`✅ Found ${alertContacts.length} contacts to alert`);
 
-        // Step 2: Check if SMS is available
         const isAvailable = await SMS.isAvailableAsync();
         if (!isAvailable) {
           Alert.alert("Error", "SMS not supported on this device");
           return;
         }
 
-        // Step 3: Sabhi contacts ko SMS bhejo (EK HI DAFA)
         const phoneNumbers = alertContacts.map(contact => contact.phone);
-        
         await SMS.sendSMSAsync(phoneNumbers, alertMessage);
 
         console.log('✅ SMS sent to all contacts');
-        
+
         Alert.alert(
-          "✅ Alert Sent Successfully!", 
+          "✅ Alert Sent Successfully!",
           `Emergency SMS sent to ${alertContacts.length} contact(s):\n\n${alertContacts.map(c => `${c.name} (${c.relationship})`).join('\n')}`,
           [{ text: "OK" }]
         );
       }
-
     } catch (error) {
       console.error('❌ Error sending emergency alert:', error);
-      
       if (error.response) {
         Alert.alert("Error", error.response.data.message || "Failed to send alert");
       } else {
@@ -156,10 +160,13 @@ export default function EmergencyContact() {
     }
   };
 
-  // 📤 Add or Edit contact
   const handleAddOrEditContact = async () => {
     if (!fullName || !phoneNumber || !relationship) {
       Alert.alert("Missing Info", "Please fill all fields.");
+      return;
+    }
+    if (!userId) {
+      Alert.alert("Error", "User not found. Please login again.");
       return;
     }
 
@@ -168,41 +175,36 @@ export default function EmergencyContact() {
 
       if (editingContact) {
         console.log(`✏️ Updating contact: ${editingContact._id}`);
-        
         const response = await axios.put(
           `${API_BASE}/update/${editingContact._id}`,
-          { 
+          {
             name: fullName,
             phone: phoneNumber,
             relationship: relationship
           }
         );
-
         if (response.data.success) {
           Alert.alert("Success", "Contact updated successfully!");
-          await fetchContacts();
+          await fetchContacts(userId);
         }
       } else {
         console.log('➕ Adding new contact');
-        
         const response = await axios.post(`${API_BASE}/add`, {
-          userId: USER_ID,
+          userId: userId,
           name: fullName,
           phone: phoneNumber,
           relationship: relationship,
           isPrimary: contacts.length === 0
         });
-
         if (response.data.success) {
           Alert.alert("Success", "Contact added successfully!");
-          await fetchContacts();
+          await fetchContacts(userId);
         }
       }
 
       closeModal();
     } catch (err) {
       console.log("❌ Error saving contact:", err);
-      
       if (err.response) {
         Alert.alert("Error", err.response.data.message || "Failed to save");
       } else {
@@ -213,7 +215,6 @@ export default function EmergencyContact() {
     }
   };
 
-  // 🗑️ Delete contact
   const handleDeleteContact = (id) => {
     Alert.alert(
       "Delete Contact",
@@ -226,12 +227,10 @@ export default function EmergencyContact() {
           onPress: async () => {
             try {
               console.log(`🗑️ Deleting contact: ${id}`);
-              
               const response = await axios.delete(`${API_BASE}/delete/${id}`);
-              
               if (response.data.success) {
                 Alert.alert("Success", "Contact deleted successfully!");
-                await fetchContacts();
+                await fetchContacts(userId);
               }
               setMenuVisible(false);
             } catch (err) {
@@ -244,14 +243,12 @@ export default function EmergencyContact() {
     );
   };
 
-  // 📲 Send SMS to individual contact
   const handleSendSMS = async (phone) => {
     const isAvailable = await SMS.isAvailableAsync();
     if (!isAvailable) {
       Alert.alert("SMS not supported on this device");
       return;
     }
-
     await SMS.sendSMSAsync(
       [phone],
       "🚨 Health Alert: Abnormal vitals detected! Please check immediately."
@@ -291,7 +288,6 @@ export default function EmergencyContact() {
           </Text>
         </View>
       </View>
-
       <View style={styles.contactActions}>
         <TouchableOpacity onPress={() => handleSendSMS(item.phone)}>
           <Ionicons name="chatbubble-ellipses-outline" size={23} color="#007BFF" />
@@ -305,9 +301,8 @@ export default function EmergencyContact() {
 
   return (
     <View style={styles.container}>
-      {/* Header with Back Button */}
       <View style={styles.header}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.back()}
         >
@@ -320,7 +315,6 @@ export default function EmergencyContact() {
         🚨 Contacts below will be notified via SMS if abnormal vitals are detected.
       </Text>
 
-      {/* 🚨 NEW: Emergency Alert Button */}
       <TouchableOpacity
         style={styles.emergencyAlertButton}
         onPress={sendEmergencyAlertToAll}
@@ -356,7 +350,7 @@ export default function EmergencyContact() {
           refreshing={refreshing}
           onRefresh={() => {
             setRefreshing(true);
-            fetchContacts();
+            fetchContacts(userId);
           }}
           ListEmptyComponent={
             <Text style={styles.emptyText}>No contacts added yet.</Text>
@@ -365,7 +359,6 @@ export default function EmergencyContact() {
         />
       )}
 
-      {/* Add/Edit Modal */}
       <Modal
         transparent={true}
         animationType="fade"
@@ -377,7 +370,6 @@ export default function EmergencyContact() {
             <Text style={styles.modalTitle}>
               {editingContact ? "Edit Contact" : "Add Emergency Contact"}
             </Text>
-
             <TextInput
               placeholder="Full Name"
               style={styles.input}
@@ -397,12 +389,10 @@ export default function EmergencyContact() {
               value={relationship}
               onChangeText={setRelationship}
             />
-
             <View style={styles.modalButtonContainer}>
               <TouchableOpacity style={styles.cancelButton} onPress={closeModal}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.addContactButton}
                 onPress={handleAddOrEditContact}
@@ -421,7 +411,6 @@ export default function EmergencyContact() {
         </View>
       </Modal>
 
-      {/* 3-dot menu */}
       <Modal
         transparent
         animationType="fade"
@@ -441,7 +430,6 @@ export default function EmergencyContact() {
               <Ionicons name="create-outline" size={20} color="#1E293B" />
               <Text style={styles.menuText}>Edit</Text>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.menuOption}
               onPress={() => handleDeleteContact(selectedContact._id)}

@@ -70,6 +70,12 @@ const userSchema = new mongoose.Schema({
   alerts: { type: Number, default: 0 },
   healthScore: { type: String, default: "A+" },
 
+  // ✅ NEW: Expo Push Token for notifications
+  expoPushToken: {
+    type: String,
+    default: null,
+  },
+
   createdAt: {
     type: Date,
     default: Date.now,

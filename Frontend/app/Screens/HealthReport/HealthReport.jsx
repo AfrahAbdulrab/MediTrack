@@ -35,7 +35,8 @@ import { getProfile } from "../../services/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // ─── API base ────────────────────────────────────────────────────────────────
-const API_URL = "http://192.168.1.3:5000/api";
+import { API_BASE_URL } from '../../constants/constants';
+const API_URL = `${API_BASE_URL}/api`;
 
 const getToken = async () => AsyncStorage.getItem("userToken");
 

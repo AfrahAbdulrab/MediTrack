@@ -117,12 +117,32 @@ router.post("/add", async (req, res) => {
       });
     }
 
+    // ✅ NEW: Duplicate check - same user ka same phone number already exist karta hai?
+    const existingContact = await EmergencyContact.findOne({ 
+      userId, 
+      phone: phone.trim() 
+    });
+
+    if (existingContact) {
+      console.log('⚠️ Duplicate contact detected:', phone);
+      return res.status(409).json({
+        success: false,
+        message: "Yeh contact already add hai",
+      });
+    }
+
+    // ✅ NEW: Agar isPrimary true hai toh pehle baaki sab contacts ko false karo
+    if (isPrimary) {
+      await EmergencyContact.updateMany({ userId }, { isPrimary: false });
+      console.log('🔄 Reset all other contacts isPrimary to false');
+    }
+
     // ✅ Naya contact banao
     const newContact = new EmergencyContact({
       userId,
-      name,
-      phone,
-      relationship,
+      name: name.trim(),
+      phone: phone.trim(),
+      relationship: relationship.trim(),
       isPrimary: isPrimary || false,
     });
 
@@ -136,6 +156,14 @@ router.post("/add", async (req, res) => {
       contact: newContact,
     });
   } catch (error) {
+    // ✅ NEW: MongoDB duplicate key error handle karo (index se)
+    if (error.code === 11000) {
+      console.log('⚠️ MongoDB duplicate key error');
+      return res.status(409).json({
+        success: false,
+        message: "Yeh contact already exist karta hai",
+      });
+    }
     console.error("❌ Error adding contact:", error);
     res.status(500).json({
       success: false,
@@ -154,14 +182,28 @@ router.post("/add", async (req, res) => {
 router.put("/update/:contactId", async (req, res) => {
   try {
     const { contactId } = req.params;
-    const { name, phone, relationship } = req.body;
+    const { name, phone, relationship, isPrimary, userId } = req.body;
     
     console.log(`✏️ Updating contact: ${contactId}`);
+
+    // ✅ NEW: Agar isPrimary true ho raha hai toh baaki sab false karo
+    if (isPrimary && userId) {
+      await EmergencyContact.updateMany(
+        { userId, _id: { $ne: contactId } },
+        { isPrimary: false }
+      );
+      console.log('🔄 Reset all other contacts isPrimary to false');
+    }
 
     // ✅ Contact find karke update karo
     const updatedContact = await EmergencyContact.findByIdAndUpdate(
       contactId,
-      { name, phone, relationship },
+      { 
+        ...(name && { name: name.trim() }),
+        ...(phone && { phone: phone.trim() }),
+        ...(relationship && { relationship: relationship.trim() }),
+        ...(isPrimary !== undefined && { isPrimary }),
+      },
       { new: true, runValidators: true } // Updated document return karo
     );
 

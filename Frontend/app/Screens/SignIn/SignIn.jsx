@@ -3,9 +3,21 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL } from '../../constants/constants';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
 
 const { width, height } = Dimensions.get('window');
-const API_URL = 'http://192.168.1.5:5000/api/auth';
+
+const API_URL = `${API_BASE_URL}/api/auth`;
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 export default function SignIn() {
   const [email, setEmail] = useState('');
@@ -14,7 +26,6 @@ export default function SignIn() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const logoScale = useRef(new Animated.Value(0)).current;
   const logoRotate = useRef(new Animated.Value(0)).current;
@@ -27,30 +38,21 @@ export default function SignIn() {
   const dividerScale = useRef(new Animated.Value(0)).current;
   const socialSlide = useRef(new Animated.Value(100)).current;
   const signUpSlide = useRef(new Animated.Value(50)).current;
-  
-  // Floating animations
   const float1 = useRef(new Animated.Value(0)).current;
   const float2 = useRef(new Animated.Value(0)).current;
   const float3 = useRef(new Animated.Value(0)).current;
-  
-  // Color pulse animation
   const colorPulse = useRef(new Animated.Value(0)).current;
-  
-  // Button animations
   const buttonScale = useRef(new Animated.Value(1)).current;
   const googleScale = useRef(new Animated.Value(1)).current;
   const facebookScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    // Master animation sequence
     Animated.sequence([
-      // Step 1: Fade in screen
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 500,
         useNativeDriver: true,
       }),
-      // Step 2: Logo entrance with rotation
       Animated.parallel([
         Animated.spring(logoScale, {
           toValue: 1,
@@ -65,7 +67,6 @@ export default function SignIn() {
           useNativeDriver: true,
         }),
       ]),
-      // Step 3: Card slides up
       Animated.spring(cardSlide, {
         toValue: 0,
         tension: 40,
@@ -74,10 +75,8 @@ export default function SignIn() {
       }),
     ]).start();
 
-    // Stagger other elements
     setTimeout(() => {
       Animated.stagger(100, [
-        // Title
         Animated.parallel([
           Animated.spring(titleSlide, {
             toValue: 0,
@@ -91,42 +90,36 @@ export default function SignIn() {
             useNativeDriver: true,
           }),
         ]),
-        // Input 1
         Animated.spring(input1Slide, {
           toValue: 0,
           tension: 50,
           friction: 7,
           useNativeDriver: true,
         }),
-        // Input 2
         Animated.spring(input2Slide, {
           toValue: 0,
           tension: 50,
           friction: 7,
           useNativeDriver: true,
         }),
-        // Button
         Animated.spring(buttonSlide, {
           toValue: 0,
           tension: 50,
           friction: 7,
           useNativeDriver: true,
         }),
-        // Divider
         Animated.spring(dividerScale, {
           toValue: 1,
           tension: 50,
           friction: 7,
           useNativeDriver: true,
         }),
-        // Social buttons
         Animated.spring(socialSlide, {
           toValue: 0,
           tension: 50,
           friction: 7,
           useNativeDriver: true,
         }),
-        // Sign up
         Animated.spring(signUpSlide, {
           toValue: 0,
           tension: 50,
@@ -136,68 +129,85 @@ export default function SignIn() {
       ]).start();
     }, 600);
 
-    // Continuous floating animations
     Animated.loop(
       Animated.sequence([
-        Animated.timing(float1, {
-          toValue: 1,
-          duration: 3000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(float1, {
-          toValue: 0,
-          duration: 3000,
-          useNativeDriver: true,
-        }),
+        Animated.timing(float1, { toValue: 1, duration: 3000, useNativeDriver: true }),
+        Animated.timing(float1, { toValue: 0, duration: 3000, useNativeDriver: true }),
       ])
     ).start();
 
     Animated.loop(
       Animated.sequence([
-        Animated.timing(float2, {
-          toValue: 1,
-          duration: 4000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(float2, {
-          toValue: 0,
-          duration: 4000,
-          useNativeDriver: true,
-        }),
+        Animated.timing(float2, { toValue: 1, duration: 4000, useNativeDriver: true }),
+        Animated.timing(float2, { toValue: 0, duration: 4000, useNativeDriver: true }),
       ])
     ).start();
 
     Animated.loop(
       Animated.sequence([
-        Animated.timing(float3, {
-          toValue: 1,
-          duration: 5000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(float3, {
-          toValue: 0,
-          duration: 5000,
-          useNativeDriver: true,
-        }),
+        Animated.timing(float3, { toValue: 1, duration: 5000, useNativeDriver: true }),
+        Animated.timing(float3, { toValue: 0, duration: 5000, useNativeDriver: true }),
       ])
     ).start();
 
-    // Color pulse animation
     Animated.loop(
       Animated.sequence([
-        Animated.timing(colorPulse, {
-          toValue: 1,
-          duration: 2000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(colorPulse, {
-          toValue: 0,
-          duration: 2000,
-          useNativeDriver: true,
-        }),
+        Animated.timing(colorPulse, { toValue: 1, duration: 2000, useNativeDriver: true }),
+        Animated.timing(colorPulse, { toValue: 0, duration: 2000, useNativeDriver: true }),
       ])
     ).start();
   }, []);
+
+  // ✅ FIXED: Firebase error nahi aayega ab
+  const registerForPushNotifications = async () => {
+    try {
+      if (!Device.isDevice) {
+        console.log('⚠️ Push notifications only work on real device');
+        return null;
+      }
+
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+
+      if (finalStatus !== 'granted') {
+        console.log('⚠️ Notification permission denied');
+        return null;
+      }
+
+      const tokenData = await Notifications.getExpoPushTokenAsync();
+      console.log('✅ Expo Push Token:', tokenData.data);
+      return tokenData.data;
+
+    } catch (error) {
+      // ✅ FIXED: Error aaye toh app crash nahi hoga
+      console.log('⚠️ Push token skipped:', error.message);
+      return null;
+    }
+  };
+
+  const savePushTokenToBackend = async (userToken, expoPushToken) => {
+    try {
+      const response = await fetch(`${API_URL}/save-push-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${userToken}`,
+        },
+        body: JSON.stringify({ expoPushToken }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        console.log('✅ Push token saved to backend');
+      }
+    } catch (error) {
+      console.log('⚠️ Failed to save push token:', error.message);
+    }
+  };
 
   const handleLogin = async () => {
     Animated.sequence([
@@ -215,13 +225,11 @@ export default function SignIn() {
       }),
     ]).start();
 
-    // Validation
     if (!email || !password) {
       Alert.alert('Error', 'Please enter email and password');
       return;
     }
 
-    // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       Alert.alert('Error', 'Please enter a valid email address');
@@ -245,11 +253,15 @@ export default function SignIn() {
       const data = await response.json();
 
       if (response.ok) {
-        // Save token and user data
         await AsyncStorage.setItem('userToken', data.token);
         await AsyncStorage.setItem('userEmail', email.toLowerCase().trim());
-        
-        // Success animation and navigation
+
+        // ✅ Push token register karo aur backend mein save karo
+        const expoPushToken = await registerForPushNotifications();
+        if (expoPushToken) {
+          await savePushTokenToBackend(data.token, expoPushToken);
+        }
+
         Animated.parallel([
           Animated.timing(cardSlide, {
             toValue: height,
@@ -264,7 +276,7 @@ export default function SignIn() {
         ]).start(() => {
           router.push({
             pathname: '/Screens/HomeScreen/HomeScreen',
-            params: { 
+            params: {
               email: email.toLowerCase().trim(),
               username: email.split('@')[0]
             }
@@ -325,32 +337,14 @@ export default function SignIn() {
 
   return (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
-      {/* Background with overlay */}
       <View style={styles.backgroundOverlay} />
 
-      {/* Floating particles */}
-      <Animated.View 
-        style={[
-          styles.particle1,
-          { transform: [{ translateY: float1Y }] }
-        ]}
-      />
-      <Animated.View 
-        style={[
-          styles.particle2,
-          { transform: [{ translateY: float2Y }] }
-        ]}
-      />
-      <Animated.View 
-        style={[
-          styles.particle3,
-          { transform: [{ translateY: float3Y }] }
-        ]}
-      />
+      <Animated.View style={[styles.particle1, { transform: [{ translateY: float1Y }] }]} />
+      <Animated.View style={[styles.particle2, { transform: [{ translateY: float2Y }] }]} />
+      <Animated.View style={[styles.particle3, { transform: [{ translateY: float3Y }] }]} />
 
-      {/* Header with logo */}
       <View style={styles.header}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.back()}
           activeOpacity={0.7}
@@ -358,15 +352,11 @@ export default function SignIn() {
           <Ionicons name="chevron-back" size={28} color="#fff" />
         </TouchableOpacity>
 
-        {/* Animated Logo */}
         <Animated.View
           style={[
             styles.logoContainer,
             {
-              transform: [
-                { scale: logoScale },
-                { rotate: logoRotation }
-              ],
+              transform: [{ scale: logoScale }, { rotate: logoRotation }],
               opacity: logoOpacity,
             }
           ]}
@@ -375,36 +365,18 @@ export default function SignIn() {
         </Animated.View>
       </View>
 
-      {/* Card with glass morphism */}
-      <Animated.View 
-        style={[
-          styles.card,
-          {
-            transform: [{ translateY: cardSlide }],
-          }
-        ]}
-      >
-        {/* Title */}
-        <Animated.View
-          style={{
-            transform: [{ translateY: titleSlide }],
-            opacity: titleOpacity,
-          }}
-        >
+      <Animated.View style={[styles.card, { transform: [{ translateY: cardSlide }] }]}>
+        <Animated.View style={{ transform: [{ translateY: titleSlide }], opacity: titleOpacity }}>
           <Text style={styles.title}>Welcome Back!</Text>
           <Text style={styles.subtitle}>Sign in to continue your journey</Text>
         </Animated.View>
 
-        {/* Email Input */}
-        <Animated.View 
+        <Animated.View
           style={[
             styles.inputContainer,
             {
               transform: [{ translateX: input1Slide }],
-              opacity: input1Slide.interpolate({
-                inputRange: [0, 100],
-                outputRange: [1, 0],
-              })
+              opacity: input1Slide.interpolate({ inputRange: [0, 100], outputRange: [1, 0] })
             }
           ]}
         >
@@ -423,16 +395,12 @@ export default function SignIn() {
           />
         </Animated.View>
 
-        {/* Password Input */}
-        <Animated.View 
+        <Animated.View
           style={[
             styles.inputContainer,
             {
               transform: [{ translateX: input2Slide }],
-              opacity: input2Slide.interpolate({
-                inputRange: [0, 100],
-                outputRange: [1, 0],
-              })
+              opacity: input2Slide.interpolate({ inputRange: [0, 100], outputRange: [1, 0] })
             }
           ]}
         >
@@ -448,21 +416,20 @@ export default function SignIn() {
             secureTextEntry={!showPassword}
             editable={!loading}
           />
-          <TouchableOpacity 
+          <TouchableOpacity
             onPress={() => setShowPassword(!showPassword)}
             style={styles.eyeIcon}
             disabled={loading}
           >
-            <Ionicons 
-              name={showPassword ? "eye-outline" : "eye-off-outline"} 
-              size={20} 
-              color="#667eea" 
+            <Ionicons
+              name={showPassword ? "eye-outline" : "eye-off-outline"}
+              size={20}
+              color="#667eea"
             />
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Forgot Password */}
-        <TouchableOpacity 
+        <TouchableOpacity
           onPress={() => router.push('/Screens/ForgetPassword/ForgetPassword')}
           activeOpacity={0.7}
           disabled={loading}
@@ -470,19 +437,9 @@ export default function SignIn() {
           <Text style={styles.forgotText}>Forgot password?</Text>
         </TouchableOpacity>
 
-        {/* Sign In Button */}
-        <Animated.View 
-          style={[
-            {
-              transform: [
-                { translateY: buttonSlide },
-                { scale: buttonScale }
-              ],
-            }
-          ]}
-        >
-          <TouchableOpacity 
-            style={[styles.signInButton, loading && styles.signInButtonDisabled]} 
+        <Animated.View style={[{ transform: [{ translateY: buttonSlide }, { scale: buttonScale }] }]}>
+          <TouchableOpacity
+            style={[styles.signInButton, loading && styles.signInButtonDisabled]}
             onPress={handleLogin}
             activeOpacity={0.9}
             disabled={loading}
@@ -495,35 +452,22 @@ export default function SignIn() {
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Divider */}
-        <Animated.View 
-          style={[
-            styles.dividerContainer,
-            {
-              transform: [{ scaleX: dividerScale }],
-            }
-          ]}
-        >
+        <Animated.View style={[styles.dividerContainer, { transform: [{ scaleX: dividerScale }] }]}>
           <View style={styles.divider} />
           <Text style={styles.orText}>OR</Text>
           <View style={styles.divider} />
         </Animated.View>
 
-        {/* Social Buttons - Side by Side */}
         <Animated.View
           style={{
             flexDirection: 'row',
             justifyContent: 'space-between',
             transform: [{ translateY: socialSlide }],
-            opacity: socialSlide.interpolate({
-              inputRange: [0, 100],
-              outputRange: [1, 0],
-            })
+            opacity: socialSlide.interpolate({ inputRange: [0, 100], outputRange: [1, 0] })
           }}
         >
-          {/* Google Button */}
           <Animated.View style={{ flex: 1, marginRight: 8, transform: [{ scale: googleScale }] }}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.socialButton}
               onPress={() => {
                 animateSocialButton(googleScale);
@@ -536,9 +480,8 @@ export default function SignIn() {
             </TouchableOpacity>
           </Animated.View>
 
-          {/* Facebook Button */}
           <Animated.View style={{ flex: 1, marginLeft: 8, transform: [{ scale: facebookScale }] }}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.socialButton}
               onPress={() => {
                 animateSocialButton(facebookScale);
@@ -552,21 +495,17 @@ export default function SignIn() {
           </Animated.View>
         </Animated.View>
 
-        {/* Sign Up Link */}
-        <Animated.View 
+        <Animated.View
           style={[
             styles.signUpContainer,
             {
               transform: [{ translateY: signUpSlide }],
-              opacity: signUpSlide.interpolate({
-                inputRange: [0, 50],
-                outputRange: [1, 0],
-              })
+              opacity: signUpSlide.interpolate({ inputRange: [0, 50], outputRange: [1, 0] })
             }
           ]}
         >
           <Text style={styles.signUpText}>Don't have an account? </Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             onPress={() => router.push('/Screens/SignUp/SignUp')}
             activeOpacity={0.7}
             disabled={loading}

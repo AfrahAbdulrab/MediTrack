@@ -3,15 +3,127 @@ const router = express.Router();
 const axios = require('axios');
 const auth = require('../middleware/authMiddleware');
 
-const Hypertension  = require('../models/Hypertension');
-const HeartCondition = require('../models/HeartCondition');
-const VitalReading  = require('../models/VitalReadings');
-const SleepApnea = require('../models/SleepApnea');
-const TachycardiaBradycardia = require('../models/TachycardiaBradycardia');
+const Hypertension             = require('../models/Hypertension');
+const HeartCondition           = require('../models/HeartCondition');
+const VitalReading             = require('../models/VitalReadings');
+const SleepApnea               = require('../models/SleepApnea');
+const TachycardiaBradycardia   = require('../models/TachycardiaBradycardia');
+const EmergencyContact         = require('../models/EmergencyContact');
+const User                     = require('../models/User');
 
-const { processHypertension } = require('../services/hypertensionService');
-const { processSleepApnea } = require('../services/sleepApneaService');
-const { processTachyBrady } = require('../services/tachyBradyService');
+const { processHypertension }  = require('../services/hypertensionService');
+const { processSleepApnea }    = require('../services/sleepApneaService');
+const { processTachyBrady }    = require('../services/tachyBradyService');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔔 Guardian Notification Helper — Expo Push Notification
+// ─────────────────────────────────────────────────────────────────────────────
+const sendGuardianNotification = async (userId, title, body) => {
+  try {
+    // Step 1: Is patient ke saare emergency contacts fetch karo
+    const contacts = await EmergencyContact.find({ userId });
+    if (!contacts.length) {
+      console.log(`⚠️ No emergency contacts found for user: ${userId}`);
+      return;
+    }
+
+    // Step 2: Har contact ka expoPushToken fetch karo
+    const messages = [];
+    for (const contact of contacts) {
+      // Contact ka userId se uska push token nikalo
+      const guardianUser = await User.findOne({ 
+        $or: [
+          { phone: contact.phone },
+          { _id: contact.userId }
+        ]
+      });
+
+      // Patient khud bhi notify ho — uska apna token
+      const patientUser = await User.findById(userId);
+      if (patientUser?.expoPushToken) {
+        messages.push({
+          to: patientUser.expoPushToken,
+          sound: 'default',
+          title,
+          body,
+          data: { userId: userId.toString(), type: 'vital_alert' },
+        });
+      }
+
+      console.log(`🔔 Notifying guardian: ${contact.name} (${contact.phone})`);
+    }
+
+    if (!messages.length) {
+      console.log('⚠️ No push tokens found — notification skipped');
+      return;
+    }
+
+    // Step 3: Expo Push Notification API ko call karo
+    const response = await axios.post(
+      'https://exp.host/--/api/v2/push/send',
+      messages,
+      {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        timeout: 5000,
+      }
+    );
+
+    console.log(`✅ Push notifications sent: ${messages.length} message(s)`);
+
+  } catch (err) {
+    console.error('❌ Guardian notification error:', err.message);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🩺 Vital Alert Check Helper
+// ─────────────────────────────────────────────────────────────────────────────
+const checkAndNotifyVitals = async (userId, reading) => {
+  const alerts = [];
+
+  // Heart Rate
+  if (reading.heartRate > 100)
+    alerts.push({ title: '❤️ Heart Rate High', body: `Heart rate ${reading.heartRate} bpm — normal range 60-100` });
+  else if (reading.heartRate < 60)
+    alerts.push({ title: '❤️ Heart Rate Low', body: `Heart rate ${reading.heartRate} bpm — normal range 60-100` });
+
+  // Blood Oxygen
+  if (reading.bloodOxygen < 95)
+    alerts.push({ title: '💨 Oxygen Level Low', body: `SpO2 ${reading.bloodOxygen}% — should be above 95%` });
+
+  // BP
+  if (reading.systolicBP && reading.systolicBP > 140)
+    alerts.push({ title: '🩸 BP High', body: `BP ${reading.systolicBP}/${reading.diastolicBP} mmHg — high detected` });
+  else if (reading.systolicBP && reading.systolicBP < 90)
+    alerts.push({ title: '🩸 BP Low', body: `BP ${reading.systolicBP}/${reading.diastolicBP} mmHg — low detected` });
+
+  // Blood Sugar
+  if (reading.bloodSugar && reading.bloodSugar > 180)
+    alerts.push({ title: '🩸 Sugar High', body: `Blood sugar ${reading.bloodSugar} mg/dL — high detected` });
+  else if (reading.bloodSugar && reading.bloodSugar < 70)
+    alerts.push({ title: '🩸 Sugar Low', body: `Blood sugar ${reading.bloodSugar} mg/dL — low detected` });
+
+  // Disease Moderate+ trigger
+  const moderateSeverities = ['Moderate', 'Severe', 'Critical'];
+  if (moderateSeverities.includes(reading.severity)) {
+    alerts.push({
+      title: '🚨 Health Alert',
+      body: `Patient condition is ${reading.severity} — ${reading.condition}. Monitoring activated.`
+    });
+  }
+
+  // Har alert bhejo
+  for (const alert of alerts) {
+    await sendGuardianNotification(userId, alert.title, alert.body);
+  }
+
+  if (alerts.length > 0) {
+    console.log(`🔔 ${alerts.length} alert(s) sent for user: ${userId}`);
+  }
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/vitals/record
@@ -43,26 +155,28 @@ router.post('/record', auth, async (req, res) => {
     const reading = new VitalReading({
       userId: req.user.id,
       timestamp: new Date(),
-      heartRate:       hr,
-      bloodOxygen:     spo2,
-      temperature:     tempCelsius,
-      age:             age             ?? vitals?.age             ?? null,
-      gender:          gender          ?? vitals?.gender          ?? null,
-      systolicBP:      systolicBP      ?? vitals?.systolicBP      ?? null,
-      diastolicBP:     diastolicBP     ?? vitals?.diastolicBP     ?? null,
-      bloodSugar:      bloodSugar      ?? vitals?.bloodSugar      ?? null,
-      respiratoryRate: respiratoryRate ?? vitals?.respiratoryRate ?? null,
-      footsteps:        footsteps        ?? vitals?.footsteps        ?? 0,
+      heartRate:        hr,
+      bloodOxygen:      spo2,
+      temperature:      tempCelsius,
+      age:              age             ?? vitals?.age             ?? null,
+      gender:           gender          ?? vitals?.gender          ?? null,
+      systolicBP:       systolicBP      ?? vitals?.systolicBP      ?? null,
+      diastolicBP:      diastolicBP     ?? vitals?.diastolicBP     ?? null,
+      bloodSugar:       bloodSugar      ?? vitals?.bloodSugar      ?? null,
+      respiratoryRate:  respiratoryRate ?? vitals?.respiratoryRate ?? null,
+      footsteps:        footsteps       ?? vitals?.footsteps       ?? 0,
       restingHeartRate: restingHeartRate ?? vitals?.restingHeartRate ?? null,
-      bmi:              bmi              ?? vitals?.bmi              ?? null,
-      accelerometer:    accelerometer    ?? vitals?.accelerometer    ?? {
+      bmi:              bmi             ?? vitals?.bmi             ?? null,
+      accelerometer:    accelerometer   ?? vitals?.accelerometer   ?? {
         x: 0, y: 9.8, z: 0, intensity: 'Still',
       },
     });
 
     await reading.save();
-
     console.log(`✅ VitalReading saved | User: ${req.user.id} | Condition: ${reading.condition} | Severity: ${reading.severity} | Risk: ${reading.riskScore}`);
+
+    // ✅ Vitals check karo aur guardian ko notify karo
+    await checkAndNotifyVitals(req.user.id, reading);
 
     let specializedRecord = null;
 
@@ -106,6 +220,120 @@ router.post('/record', auth, async (req, res) => {
   } catch (error) {
     console.error('❌ Error recording vitals:', error);
     res.status(500).json({ success: false, message: 'Failed to record vital signs', error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/vitals/hypertension — notify with disease severity
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/hypertension', auth, async (req, res) => {
+  try {
+    const derived = processHypertension(req.body);
+    const record = new Hypertension({
+      patient_id:   req.user.id,
+      age:          req.body.age,
+      gender:       req.body.gender,
+      weight_kg:    req.body.weight_kg,
+      height_cm:    req.body.height_cm,
+      systolic_bp:  req.body.systolic_bp,
+      diastolic_bp: req.body.diastolic_bp,
+      resting_hr:   req.body.resting_hr,
+      steps_7days:  req.body.steps_7days,
+      ...derived
+    });
+    await record.save();
+    console.log(`✅ Hypertension saved | User: ${req.user.id} | Severity: ${derived.severity} | Risk: ${derived.risk_score}`);
+
+    // ✅ Moderate+ disease notification
+    const moderateSeverities = ['Moderate', 'Severe', 'Critical'];
+    if (moderateSeverities.includes(derived.severity)) {
+      await sendGuardianNotification(
+        req.user.id,
+        '🚨 Hypertension Alert',
+        `Hypertension is ${derived.severity} — BP ${req.body.systolic_bp}/${req.body.diastolic_bp} mmHg`
+      );
+    }
+
+    res.status(201).json({ success: true, message: '✅ Hypertension data saved', data: record });
+  } catch (error) {
+    console.error('❌ Hypertension error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/vitals/sleep-apnea — notify with disease severity
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/sleep-apnea', auth, async (req, res) => {
+  try {
+    const derived = processSleepApnea(req.body);
+    const record = new SleepApnea({
+      patient_id:           req.user.id,
+      age:                  req.body.age,
+      gender:               req.body.gender,
+      spo2:                 req.body.spo2,
+      spo2_drop:            req.body.spo2_drop,
+      heart_rate:           req.body.heart_rate,
+      hr_spike:             req.body.hr_spike,
+      accel:                req.body.accel,
+      sleep_duration_hours: req.body.sleep_duration_hours,
+      time_in_bed_hours:    req.body.time_in_bed_hours,
+      ahi:                  req.body.ahi,
+      ...derived
+    });
+    await record.save();
+    console.log(`✅ SleepApnea saved | User: ${req.user.id} | Severity: ${derived.severity}`);
+
+    // ✅ Moderate+ disease notification
+    const moderateSeverities = ['Moderate', 'Severe', 'Critical'];
+    if (moderateSeverities.includes(derived.severity)) {
+      await sendGuardianNotification(
+        req.user.id,
+        '🚨 Sleep Apnea Alert',
+        `Sleep Apnea is ${derived.severity} — please check patient immediately`
+      );
+    }
+
+    res.status(201).json({ success: true, message: '✅ Sleep Apnea data saved', data: record });
+  } catch (error) {
+    console.error('❌ Sleep Apnea error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/vitals/tachy-brady — notify with disease severity
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/tachy-brady', auth, async (req, res) => {
+  try {
+    const derived = processTachyBrady(req.body);
+    const record = new TachycardiaBradycardia({
+      patient_id:   req.user.id,
+      age:          req.body.age,
+      gender:       req.body.gender,
+      heart_rate:   req.body.heart_rate,
+      systolic_bp:  req.body.systolic_bp,
+      diastolic_bp: req.body.diastolic_bp,
+      spo2:         req.body.spo2,
+      ...derived
+    });
+    await record.save();
+    console.log(`✅ TachyBrady saved | User: ${req.user.id} | Condition: ${derived.hr_condition} | Severity: ${derived.severity}`);
+
+    // ✅ Moderate+ disease notification
+    const moderateSeverities = ['Moderate', 'Severe', 'Critical'];
+    if (moderateSeverities.includes(derived.severity)) {
+      await sendGuardianNotification(
+        req.user.id,
+        '🚨 Tachycardia/Bradycardia Alert',
+        `${derived.hr_condition} is ${derived.severity} — Heart rate ${req.body.heart_rate} bpm`
+      );
+    }
+
+    res.status(201).json({ success: true, message: '✅ Tachycardia/Bradycardia data saved', data: record });
+  } catch (error) {
+    console.error('❌ Tachy/Brady error:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -174,103 +402,7 @@ router.get('/stats', auth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ POST /api/vitals/hypertension
-// FIX 1: auth add kiya
-// FIX 2: patient_id ab req.user.id se aayega (logged in user)
-// ─────────────────────────────────────────────────────────────────────────────
-router.post('/hypertension', auth, async (req, res) => {
-  try {
-    const derived = processHypertension(req.body);
-
-    const record = new Hypertension({
-      patient_id:   req.user.id,          // ✅ FIX: logged-in user ka ID
-      age:          req.body.age,
-      gender:       req.body.gender,
-      weight_kg:    req.body.weight_kg,
-      height_cm:    req.body.height_cm,
-      systolic_bp:  req.body.systolic_bp,
-      diastolic_bp: req.body.diastolic_bp,
-      resting_hr:   req.body.resting_hr,
-      steps_7days:  req.body.steps_7days,
-      ...derived
-    });
-
-    await record.save();
-    console.log(`✅ Hypertension saved | User: ${req.user.id} | Severity: ${derived.severity} | Risk: ${derived.risk_score}`);
-    res.status(201).json({ success: true, message: '✅ Hypertension data saved', data: record });
-
-  } catch (error) {
-    console.error('❌ Hypertension error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ✅ POST /api/vitals/sleep-apnea
-// FIX 1: auth add kiya
-// FIX 2: patient_id ab req.user.id se aayega
-// ─────────────────────────────────────────────────────────────────────────────
-router.post('/sleep-apnea', auth, async (req, res) => {
-  try {
-    const derived = processSleepApnea(req.body);
-
-    const record = new SleepApnea({
-      patient_id:           req.user.id,   // ✅ FIX: logged-in user ka ID
-      age:                  req.body.age,
-      gender:               req.body.gender,
-      spo2:                 req.body.spo2,
-      spo2_drop:            req.body.spo2_drop,
-      heart_rate:           req.body.heart_rate,
-      hr_spike:             req.body.hr_spike,
-      accel:                req.body.accel,
-      sleep_duration_hours: req.body.sleep_duration_hours,
-      time_in_bed_hours:    req.body.time_in_bed_hours,
-      ahi:                  req.body.ahi,
-      ...derived
-    });
-
-    await record.save();
-    console.log(`✅ SleepApnea saved | User: ${req.user.id} | Severity: ${derived.severity} | Event: ${derived.event_label}`);
-    res.status(201).json({ success: true, message: '✅ Sleep Apnea data saved', data: record });
-
-  } catch (error) {
-    console.error('❌ Sleep Apnea error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ✅ POST /api/vitals/tachy-brady
-// FIX 1: auth add kiya
-// FIX 2: patient_id ab req.user.id se aayega
-// ─────────────────────────────────────────────────────────────────────────────
-router.post('/tachy-brady', auth, async (req, res) => {
-  try {
-    const derived = processTachyBrady(req.body);
-
-    const record = new TachycardiaBradycardia({
-      patient_id:   req.user.id,           // ✅ FIX: logged-in user ka ID
-      age:          req.body.age,
-      gender:       req.body.gender,
-      heart_rate:   req.body.heart_rate,
-      systolic_bp:  req.body.systolic_bp,
-      diastolic_bp: req.body.diastolic_bp,
-      spo2:         req.body.spo2,
-      ...derived
-    });
-
-    await record.save();
-    console.log(`✅ TachyBrady saved | User: ${req.user.id} | Condition: ${derived.hr_condition} | Severity: ${derived.severity}`);
-    res.status(201).json({ success: true, message: '✅ Tachycardia/Bradycardia data saved', data: record });
-
-  } catch (error) {
-    console.error('❌ Tachy/Brady error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/vitals/patient/:patient_id — ek patient ki sab disease records
+// GET /api/vitals/patient/:patient_id
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/patient/:patient_id', auth, async (req, res) => {
   try {

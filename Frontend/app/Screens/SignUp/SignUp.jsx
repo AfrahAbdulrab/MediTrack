@@ -2,10 +2,12 @@ import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, Animated, D
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-
+import { API_BASE_URL } from '../../constants/constants';
 const { width, height } = Dimensions.get('window');
-const API_URL = 'http://192.168.1.3:5000/api/auth';
-const BASE_URL = 'http://192.168.1.3:5000';
+
+const API_URL = `${API_BASE_URL}/api/auth`;
+const BASE_URL = API_BASE_URL;
+
 export default function SignUp() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
