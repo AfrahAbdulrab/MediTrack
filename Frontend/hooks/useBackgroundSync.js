@@ -2,6 +2,7 @@ import BackgroundFetch from 'react-native-background-fetch';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { readRecords, initialize, getSdkStatus, SdkAvailabilityStatus } from 'react-native-health-connect';
 import { API_BASE_URL } from '../app/constants/constants';
+import { getPatientCondition, getIntervalByCondition } from './useWearData';
 
 const fetchAndSaveToBackend = async () => {
   try {
@@ -46,6 +47,11 @@ const fetchAndSaveToBackend = async () => {
       stepsData.records.forEach((r) => (steps += r.count));
     }
 
+    // ✅ NEW: Condition check karo
+    const condition = getPatientCondition(heartRate, spo2);
+    const nextInterval = getIntervalByCondition(condition);
+    console.log(`🏥 Condition: ${condition} | Next sync: ${nextInterval / 60000} min`);
+
     // Backend pe save karo
     const token = await AsyncStorage.getItem('userToken');
     console.log('🔑 Token:', token ? 'EXISTS' : 'NULL');
@@ -63,21 +69,35 @@ const fetchAndSaveToBackend = async () => {
         temperature: 98.6,
         footsteps: steps,
         restingHeartRate: heartRate,
+        condition,               // ✅ NEW
+        nextSyncInterval: nextInterval, // ✅ NEW
       }),
     });
 
     const result = await response.json();
     console.log('🔴 Backend response:', JSON.stringify(result));
-    console.log('✅ Background sync done:', { heartRate, spo2, steps });
+    console.log('✅ Background sync done:', { heartRate, spo2, steps, condition });
+
+    // ✅ NEW: Next interval save karo
+    await AsyncStorage.setItem('nextSyncInterval', String(nextInterval));
+    await AsyncStorage.setItem('lastCondition', condition);
+
   } catch (e) {
     console.log('Background sync error:', e.message);
   }
 };
 
-export const configureBackgroundFetch = () => {
+export const configureBackgroundFetch = async () => {
+  // ✅ NEW: Saved interval use karo, default 60 min
+  const savedInterval = await AsyncStorage.getItem('nextSyncInterval');
+  const intervalMs = savedInterval ? parseInt(savedInterval) : 60 * 60 * 1000;
+  const intervalMin = Math.max(15, Math.floor(intervalMs / 60000));
+
+  console.log(`⚙️ Background fetch interval: ${intervalMin} min`);
+
   BackgroundFetch.configure(
     {
-      minimumFetchInterval: 15,
+      minimumFetchInterval: intervalMin, // ✅ Dynamic
       stopOnTerminate: false,
       startOnBoot: true,
       enableHeadless: true,
@@ -86,6 +106,17 @@ export const configureBackgroundFetch = () => {
     async (taskId) => {
       console.log('📡 Background fetch triggered:', taskId);
       await fetchAndSaveToBackend();
+
+      // ✅ NEW: Reconfigure with updated interval
+      const newInterval = await AsyncStorage.getItem('nextSyncInterval');
+      if (newInterval) {
+        BackgroundFetch.scheduleTask({
+          taskId: 'adaptive-vitals-sync',
+          delay: parseInt(newInterval),
+          periodic: false,
+        });
+      }
+
       BackgroundFetch.finish(taskId);
     },
     (taskId) => {
