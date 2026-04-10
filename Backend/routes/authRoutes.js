@@ -263,7 +263,7 @@ router.post("/upload-profile-image", authenticateToken, upload.single('profileIm
   }
 });
 
-// ===== ✅ NEW: SAVE EXPO PUSH TOKEN =====
+// ===== ✅ SAVE EXPO PUSH TOKEN =====
 router.post("/save-push-token", authenticateToken, async (req, res) => {
   try {
     const { expoPushToken } = req.body;
@@ -279,6 +279,102 @@ router.post("/save-push-token", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Save push token error:", error);
     res.status(500).json({ message: "Failed to save token", error: error.message });
+  }
+});
+
+// ===== ✅ NEW: UPDATE MANUAL VITALS (BP, Blood Sugar, Body Temp) =====
+// Frontend (MyProfile.js) is route ko call karega jab patient vitals enter kare
+router.put("/vitals", authenticateToken, async (req, res) => {
+  try {
+    const { bpSystolic, bpDiastolic, bloodSugar, temperature, recordedAt } = req.body;
+
+    // ── Validation ──────────────────────────────────────────────────────────
+    if (!bpSystolic && !bpDiastolic && !bloodSugar && !temperature) {
+      return res.status(400).json({ message: "Kam az kam ek vital enter karo" });
+    }
+
+    // ── Vitals normal hain ya abnormal check karo ────────────────────────────
+    // BP: Normal  → Systolic 90-120, Diastolic 60-80
+    // Blood Sugar: Normal → 70-140 mg/dL
+    // Temperature: Normal → 97°F - 99°F
+    let isAbnormal = false;
+
+    if (bpSystolic && (bpSystolic > 140 || bpSystolic < 90))   isAbnormal = true;
+    if (bpDiastolic && (bpDiastolic > 90 || bpDiastolic < 60)) isAbnormal = true;
+    if (bloodSugar && (bloodSugar > 140 || bloodSugar < 70))   isAbnormal = true;
+    if (temperature && (temperature > 99.5 || temperature < 97)) isAbnormal = true;
+
+    const vitalsStatus = isAbnormal ? 'abnormal' : 'normal';
+
+    // ── Next reminder time calculate karo ────────────────────────────────────
+    // abnormal → 1 ghante baad remind
+    // normal   → 1 din baad remind
+    const now = new Date();
+    const nextReminderAt = isAbnormal
+      ? new Date(now.getTime() + 1 * 60 * 60 * 1000)        // 1 hour
+      : new Date(now.getTime() + 24 * 60 * 60 * 1000);      // 24 hours
+
+    // ── User update karo ─────────────────────────────────────────────────────
+    const user = await User.findByIdAndUpdate(
+      req.userId,
+      {
+        vitals: {
+          bpSystolic:     bpSystolic    || null,
+          bpDiastolic:    bpDiastolic   || null,
+          bloodSugar:     bloodSugar    || null,
+          temperature:    temperature   || null,
+          recordedAt:     recordedAt    || now,
+          vitalsStatus,
+          nextReminderAt,
+        },
+        updatedAt: now,
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    console.log(`✅ Vitals saved | User: ${req.userId} | Status: ${vitalsStatus} | Next reminder: ${nextReminderAt.toLocaleString()}`);
+
+    res.status(200).json({
+      success: true,
+      message: `Vitals saved! ${isAbnormal ? '⚠️ Abnormal — 1 hour mein update karo' : '✅ Normal — kal update karna'}`,
+      vitals: user.vitals,
+      vitalsStatus,
+      nextReminderAt,
+    });
+
+  } catch (error) {
+    console.error("❌ Update vitals error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
+
+// ===== ✅ NEW: GET VITALS REMINDER STATUS =====
+// Frontend check karega ke reminder time aaya ya nahi
+router.get("/vitals-reminder", authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const now = new Date();
+    const nextReminder = user.vitals?.nextReminderAt;
+
+    // Agar reminder time aa gaya hai
+    const shouldRemind = nextReminder && now >= new Date(nextReminder);
+
+    res.json({
+      success: true,
+      shouldRemind,
+      vitalsStatus: user.vitals?.vitalsStatus || 'normal',
+      nextReminderAt: nextReminder,
+      vitals: user.vitals,
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 });
 

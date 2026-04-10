@@ -72,6 +72,66 @@ export const updateProfile = async (profileData) => {
   }
 };
 
+// ✅ NEW: Update Manual Vitals (BP, Blood Sugar, Body Temp)
+// MyProfile.js is function ko call karega
+// Backend automatically check karega normal/abnormal
+// aur nextReminderAt set karega (1 hour ya 24 hours)
+export const updateVitalSigns = async (vitalsData) => {
+  try {
+    const token = await getAuthToken();
+
+    if (!token) {
+      throw new Error('No authentication token found');
+    }
+
+    const response = await fetch(`${API_URL}/vitals`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(vitalsData),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update vitals');
+    }
+
+    console.log(`✅ Vitals updated | Status: ${data.vitalsStatus} | Next reminder: ${data.nextReminderAt}`);
+    return data;
+
+  } catch (error) {
+    console.error('❌ Update vitals error:', error);
+    throw error;
+  }
+};
+
+// ✅ NEW: Check vitals reminder
+// App open hone pe call karo — agar reminder time aa gaya to popup dikhao
+export const checkVitalsReminder = async () => {
+  try {
+    const token = await getAuthToken();
+    if (!token) return null;
+
+    const response = await fetch(`${API_URL}/vitals-reminder`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const data = await response.json();
+    return data;
+
+  } catch (error) {
+    console.error('❌ Check reminder error:', error);
+    return null;
+  }
+};
+
 // ✅ Forgot Password - Send Reset Code
 export const forgotPassword = async (email) => {
   try {
@@ -237,6 +297,8 @@ export default {
   getAuthToken,
   getProfile,
   updateProfile,
+  updateVitalSigns,
+  checkVitalsReminder,
   forgotPassword,
   verifyResetCode,
   resetPassword,

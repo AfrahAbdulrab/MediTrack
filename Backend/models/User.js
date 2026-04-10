@@ -70,10 +70,34 @@ const userSchema = new mongoose.Schema({
   alerts: { type: Number, default: 0 },
   healthScore: { type: String, default: "A+" },
 
-  // ✅ NEW: Expo Push Token for notifications
+  // ✅ Expo Push Token for notifications
   expoPushToken: {
     type: String,
     default: null,
+  },
+
+  // ✅ NEW: Manual Vitals (BP, Blood Sugar, Body Temp)
+  // Ye patient profile mein manually enter karta hai
+  vitals: {
+    bpSystolic:   { type: Number, default: null },  // mmHg
+    bpDiastolic:  { type: Number, default: null },  // mmHg
+    bloodSugar:   { type: Number, default: null },  // mg/dL
+    temperature:  { type: Number, default: null },  // °F
+    recordedAt:   { type: Date,   default: null },  // Last update time
+
+    // ✅ NEW: Condition status — normal ya abnormal
+    // Ye check karne ke liye ke kitni der baad remind karna hai
+    // normal    → 1 din baad remind
+    // abnormal  → 1 ghante baad remind
+    vitalsStatus: {
+      type: String,
+      enum: ['normal', 'abnormal'],
+      default: 'normal',
+    },
+
+    // ✅ NEW: Next update reminder time
+    // Backend calculate karega based on vitalsStatus
+    nextReminderAt: { type: Date, default: null },
   },
 
   createdAt: {

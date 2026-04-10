@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
+  Modal,
 } from "react-native";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -17,6 +18,7 @@ import {
   Phone,
   MapPin,
   Menu,
+  ClipboardList,
 } from "lucide-react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import Footer from '../components/Footer';
@@ -24,6 +26,7 @@ import MenuDrawer from '../components/Menu';
 import { API_BASE_URL } from '../../constants/constants';
 import { syncHealthData } from '../../services/HealthService';
 import { useWearData } from '../../../hooks/useWearData';
+import { checkVitalsReminder } from '../../services/api'; // ✅ NEW
 
 const { width } = Dimensions.get("window");
 
@@ -41,6 +44,10 @@ export default function HomeScreen({ route }) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [menuVisible, setMenuVisible] = useState(false);
 
+  // ✅ NEW: Vitals reminder popup state
+  const [reminderVisible, setReminderVisible] = useState(false);
+  const [reminderStatus, setReminderStatus] = useState('normal'); // 'normal' | 'abnormal'
+
   const [vitals, setVitals] = useState({
     heartRate:   null,
     temperature: null,
@@ -54,7 +61,21 @@ export default function HomeScreen({ route }) {
 
   useEffect(() => {
     loadUserData();
+    checkReminder(); // ✅ NEW: App open hone pe reminder check karo
   }, []);
+
+  // ✅ NEW: Vitals reminder check karne ka function
+  const checkReminder = async () => {
+    try {
+      const data = await checkVitalsReminder();
+      if (data?.shouldRemind) {
+        setReminderStatus(data.vitalsStatus || 'normal');
+        setReminderVisible(true);
+      }
+    } catch (e) {
+      console.log('Reminder check error:', e.message);
+    }
+  };
 
   const loadUserData = async () => {
     try {
@@ -432,6 +453,63 @@ export default function HomeScreen({ route }) {
 
       <Footer />
       <MenuDrawer visible={menuVisible} onClose={() => setMenuVisible(false)} navigation={router} />
+
+      {/* ✅ NEW: Vitals Reminder Popup */}
+      <Modal
+        visible={reminderVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setReminderVisible(false)}
+      >
+        <View style={styles.reminderOverlay}>
+          <View style={styles.reminderBox}>
+
+            {/* Icon */}
+            <View style={[styles.reminderIconCircle, {
+              backgroundColor: reminderStatus === 'abnormal' ? '#FEE2E2' : '#DBEAFE'
+            }]}>
+              <ClipboardList
+                size={32}
+                color={reminderStatus === 'abnormal' ? '#EF4444' : '#3B82F6'}
+              />
+            </View>
+
+            {/* Title */}
+            <Text style={styles.reminderTitle}>
+              {reminderStatus === 'abnormal' ? '⚠️ Vitals Update Needed' : '📋 Time to Update Vitals'}
+            </Text>
+
+            {/* Message */}
+            <Text style={styles.reminderMessage}>
+              {reminderStatus === 'abnormal'
+                ? 'Aapki last reading abnormal thi. Please apna Blood Pressure, Blood Sugar aur Temperature update karein.'
+                : 'Aapki daily vitals update ka waqt ho gaya hai. Please apni readings update karein.'}
+            </Text>
+
+            {/* Buttons */}
+            <TouchableOpacity
+              style={[styles.reminderUpdateBtn, {
+                backgroundColor: reminderStatus === 'abnormal' ? '#EF4444' : '#3B82F6'
+              }]}
+              onPress={() => {
+                setReminderVisible(false);
+                router.push('/Screens/MyProfile/MyProfile');
+              }}
+            >
+              <Text style={styles.reminderUpdateBtnText}>Update Now</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.reminderLaterBtn}
+              onPress={() => setReminderVisible(false)}
+            >
+              <Text style={styles.reminderLaterBtnText}>Later</Text>
+            </TouchableOpacity>
+
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -502,4 +580,52 @@ const styles = StyleSheet.create({
   actionButton:         { width: (width - 44) / 2, borderRadius: 12, padding: 16, alignItems: "center", gap: 8, elevation: 3 },
   actionButtonTitle:    { fontSize: 14, fontWeight: "600", color: "#FFF", textAlign: "center" },
   actionButtonSubtitle: { fontSize: 12, color: "rgba(255,255,255,0.9)" },
+
+  // ✅ NEW: Reminder popup styles
+  reminderOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  reminderBox: {
+    backgroundColor: '#FFF',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    alignItems: 'center',
+    elevation: 10,
+  },
+  reminderIconCircle: {
+    width: 64, height: 64, borderRadius: 32,
+    justifyContent: 'center', alignItems: 'center',
+    marginBottom: 16,
+  },
+  reminderTitle: {
+    fontSize: 18, fontWeight: '700',
+    color: '#111827', marginBottom: 10,
+    textAlign: 'center',
+  },
+  reminderMessage: {
+    fontSize: 14, color: '#6B7280',
+    textAlign: 'center', lineHeight: 22,
+    marginBottom: 24,
+  },
+  reminderUpdateBtn: {
+    width: '100%', paddingVertical: 14,
+    borderRadius: 12, alignItems: 'center',
+    marginBottom: 10,
+  },
+  reminderUpdateBtnText: {
+    color: '#FFF', fontSize: 16, fontWeight: '700',
+  },
+  reminderLaterBtn: {
+    width: '100%', paddingVertical: 12,
+    borderRadius: 12, alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+  },
+  reminderLaterBtnText: {
+    color: '#6B7280', fontSize: 15, fontWeight: '600',
+  },
 });
