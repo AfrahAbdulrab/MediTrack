@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "react-native-background-fetch": "^4.3.0"
+  }
+}
