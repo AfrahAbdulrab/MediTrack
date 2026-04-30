@@ -1,0 +1,133 @@
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useRef } from 'react';
+
+const { width, height } = Dimensions.get('window');
+
+// ✅ navigation prop add kiya — expo-router hata diya
+export default function GuardianWelcomeScreen({ navigation }) {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const logoScale = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const titleSlide = useRef(new Animated.Value(50)).current;
+  const subtitleSlide = useRef(new Animated.Value(50)).current;
+  const button1Scale = useRef(new Animated.Value(0)).current;
+  const button2Scale = useRef(new Animated.Value(0)).current;
+  const floatingAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }).start();
+    Animated.spring(logoScale, { toValue: 1, delay: 300, tension: 40, friction: 7, useNativeDriver: true }).start(() => {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.15, duration: 1000, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+        ])
+      ).start();
+    });
+    Animated.spring(titleSlide, { toValue: 0, delay: 600, tension: 50, friction: 8, useNativeDriver: true }).start();
+    Animated.spring(subtitleSlide, { toValue: 0, delay: 750, tension: 50, friction: 8, useNativeDriver: true }).start();
+    Animated.spring(button1Scale, { toValue: 1, delay: 900, tension: 50, friction: 7, useNativeDriver: true }).start();
+    Animated.spring(button2Scale, { toValue: 1, delay: 1050, tension: 50, friction: 7, useNativeDriver: true }).start();
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatingAnim, { toValue: 1, duration: 3000, useNativeDriver: true }),
+        Animated.timing(floatingAnim, { toValue: 0, duration: 3000, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+
+  const floatingY = floatingAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -15] });
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.gradientBackground}>
+        <View style={[styles.gradientCircle, styles.circle1]} />
+        <View style={[styles.gradientCircle, styles.circle2]} />
+        <View style={[styles.gradientCircle, styles.circle3]} />
+      </View>
+
+      {/* ✅ Back button — navigation.goBack() */}
+     
+
+      <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
+        <Animated.View style={[styles.logoContainer, { transform: [{ scale: Animated.multiply(logoScale, pulseAnim) }, { translateY: floatingY }] }]}>
+          <View style={styles.outerGlow} />
+          <View style={styles.logoCircle}>
+            <Ionicons name="shield-checkmark" size={60} color="#fff" />
+          </View>
+          <Animated.View style={[styles.pulseRing, { transform: [{ scale: pulseAnim }], opacity: pulseAnim.interpolate({ inputRange: [1, 1.15], outputRange: [0.6, 0] }) }]} />
+        </Animated.View>
+
+        <Animated.View style={{ transform: [{ translateY: titleSlide }], opacity: titleSlide.interpolate({ inputRange: [0, 50], outputRange: [1, 0] }) }}>
+          <Text style={styles.title}>Guardian Panel</Text>
+        </Animated.View>
+
+        <Animated.View style={{ transform: [{ translateY: subtitleSlide }], opacity: subtitleSlide.interpolate({ inputRange: [0, 50], outputRange: [1, 0] }) }}>
+          <Text style={styles.subtitle}>Protect & Monitor Your Loved Ones</Text>
+          <Text style={styles.tagline}>Watch • Alert • Care</Text>
+        </Animated.View>
+
+        <View style={styles.buttonContainer}>
+          <Animated.View style={{ transform: [{ scale: button1Scale }], width: '100%' }}>
+            {/* ✅ Login button — navigation.navigate('Login') */}
+            <TouchableOpacity style={styles.signInButton} onPress={() => navigation.navigate('Login')} activeOpacity={0.8}>
+              <Ionicons name="log-in-outline" size={22} color="#fff" style={styles.buttonIcon} />
+              <Text style={styles.buttonText}>Login</Text>
+            </TouchableOpacity>
+          </Animated.View>
+
+          <Animated.View style={{ transform: [{ scale: button2Scale }], width: '100%' }}>
+            {/* ✅ Register button — navigation.navigate('Register') */}
+            <TouchableOpacity style={styles.signUpButton} onPress={() => navigation.navigate('Register')} activeOpacity={0.8}>
+              <Ionicons name="person-add-outline" size={22} color="#E57373" style={styles.buttonIcon} />
+              <Text style={[styles.buttonText, styles.signUpText]}>Create Account</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
+
+        <View style={styles.featuresContainer}>
+          <View style={styles.featureItem}>
+            <Ionicons name="people-outline" size={20} color="#E57373" />
+            <Text style={styles.featureText}>Family Monitor</Text>
+          </View>
+          <View style={styles.featureItem}>
+            <Ionicons name="notifications-outline" size={20} color="#E57373" />
+            <Text style={styles.featureText}>Live Alerts</Text>
+          </View>
+          <View style={styles.featureItem}>
+            <Ionicons name="location-outline" size={20} color="#E57373" />
+            <Text style={styles.featureText}>GPS Tracking</Text>
+          </View>
+        </View>
+      </Animated.View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#fff5f5' },
+  gradientBackground: { position: 'absolute', width: '100%', height: '100%' },
+  gradientCircle: { position: 'absolute', borderRadius: 1000 },
+  circle1: { width: 300, height: 300, backgroundColor: 'rgba(229, 115, 115, 0.15)', top: -100, right: -100 },
+  circle2: { width: 250, height: 250, backgroundColor: 'rgba(229, 115, 115, 0.1)', bottom: -80, left: -80 },
+  circle3: { width: 200, height: 200, backgroundColor: 'rgba(229, 115, 115, 0.08)', top: height / 2, left: -50 },
+  backButton: { position: 'absolute', top: 55, left: 20, width: 38, height: 38, borderRadius: 19, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3, zIndex: 10 },
+  content: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 },
+  logoContainer: { marginBottom: 40, alignItems: 'center', justifyContent: 'center' },
+  outerGlow: { position: 'absolute', width: 180, height: 180, borderRadius: 90, backgroundColor: 'rgba(229, 115, 115, 0.2)' },
+  logoCircle: { width: 140, height: 140, borderRadius: 70, backgroundColor: '#E57373', alignItems: 'center', justifyContent: 'center', shadowColor: '#E57373', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.5, shadowRadius: 20, elevation: 15, borderWidth: 5, borderColor: 'rgba(255, 255, 255, 0.3)' },
+  pulseRing: { position: 'absolute', width: 180, height: 180, borderRadius: 90, borderWidth: 3, borderColor: '#E57373' },
+  title: { fontSize: 42, fontWeight: 'bold', color: '#E57373', marginBottom: 8, textAlign: 'center', letterSpacing: 1 },
+  subtitle: { fontSize: 18, color: '#666', marginBottom: 5, textAlign: 'center', fontWeight: '600' },
+  tagline: { fontSize: 14, color: '#999', textAlign: 'center', marginBottom: 50, letterSpacing: 2 },
+  buttonContainer: { width: '100%', gap: 15 },
+  signInButton: { flexDirection: 'row', backgroundColor: '#E57373', width: '100%', paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', shadowColor: '#E57373', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 8 },
+  signUpButton: { flexDirection: 'row', backgroundColor: '#fff', width: '100%', paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#E57373', shadowColor: '#E57373', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 4 },
+  buttonIcon: { marginRight: 8 },
+  buttonText: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: 0.5 },
+  signUpText: { color: '#E57373' },
+  featuresContainer: { flexDirection: 'row', marginTop: 40, gap: 20 },
+  featureItem: { alignItems: 'center', gap: 5 },
+  featureText: { fontSize: 11, color: '#999', fontWeight: '600' },
+});

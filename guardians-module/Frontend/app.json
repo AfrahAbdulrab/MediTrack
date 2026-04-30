@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "MediTrack Guardian",
+    "slug": "meditrack-guardian",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.meditrack.guardian"
+    },
+    "android": {
+      "package": "com.meditrack.guardian",
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "plugins": [
+      "react-native-health-connect",
+      "expo-notifications",
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a54c051a-2253-4f01-90d1-b2be303d6618"
+      }
+    }
+  }
+}
