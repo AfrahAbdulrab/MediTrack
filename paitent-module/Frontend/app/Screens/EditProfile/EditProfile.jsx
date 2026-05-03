@@ -1,5 +1,5 @@
 // Screens/EditProfile/EditProfile.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -24,64 +24,62 @@ export default function EditProfile({ navigation = {}, route = {} }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
-  // Parse profile data from params
+  // ✅ FIX: initialData parse karo sabse pehle
   const initialData = route?.params?.profileData
     ? JSON.parse(route.params.profileData)
     : {};
 
+  // ✅ FIX: gender aur bloodType mein koi hardcoded default nahi
   const [formData, setFormData] = useState({
     fullName: initialData.fullName || initialData.name || "",
     dateOfBirth: initialData.dateOfBirth || "",
-    gender: initialData.gender || "Male",
+    gender: initialData.gender || "",
     phone: initialData.phone || "",
     email: initialData.email || "",
-    age: initialData.age || "",
-    bloodType: initialData.bloodType || "B+",
-    height: initialData.height || "",
-    weight: initialData.weight || "",
+    age: initialData.age ? String(initialData.age) : "",
+    bloodType: initialData.bloodType || "",
+    height: initialData.height ? String(initialData.height) : "",
+    weight: initialData.weight ? String(initialData.weight) : "",
     allergies: initialData.allergies || "",
     medicalHistory: initialData.medicalHistory || "",
     address: initialData.address || "",
   });
 
-  const [selectedGender, setSelectedGender] = useState(formData.gender);
+  // ✅ FIX: selectedGender directly initialData se lo — formData se nahi
+  const [selectedGender, setSelectedGender] = useState(initialData.gender || "");
 
   const updateField = (field, value) => {
-    setFormData({ ...formData, [field]: value });
+    setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const validateForm = () => {
-    // Basic validation
     if (!formData.fullName.trim()) {
-      Alert.alert('Validation Error', 'Full name is required');
+      Alert.alert("Validation Error", "Full name is required");
       return false;
     }
-
     if (formData.fullName.trim().length < 2) {
-      Alert.alert('Validation Error', 'Name must be at least 2 characters');
+      Alert.alert("Validation Error", "Name must be at least 2 characters");
       return false;
     }
-
     if (formData.phone && formData.phone.length < 10) {
-      Alert.alert('Validation Error', 'Please enter a valid phone number');
+      Alert.alert("Validation Error", "Please enter a valid phone number");
       return false;
     }
-
-    if (formData.age && (isNaN(formData.age) || formData.age < 1 || formData.age > 150)) {
-      Alert.alert('Validation Error', 'Please enter a valid age');
+    if (
+      formData.age &&
+      (isNaN(formData.age) || formData.age < 1 || formData.age > 150)
+    ) {
+      Alert.alert("Validation Error", "Please enter a valid age");
       return false;
     }
-
     if (formData.height && (isNaN(formData.height) || formData.height < 1)) {
-      Alert.alert('Validation Error', 'Please enter a valid height');
+      Alert.alert("Validation Error", "Please enter a valid height");
       return false;
     }
-
     if (formData.weight && (isNaN(formData.weight) || formData.weight < 1)) {
-      Alert.alert('Validation Error', 'Please enter a valid weight');
+      Alert.alert("Validation Error", "Please enter a valid weight");
       return false;
     }
-
     return true;
   };
 
@@ -94,10 +92,10 @@ export default function EditProfile({ navigation = {}, route = {} }) {
         fullName: formData.fullName.trim(),
         name: formData.fullName.trim(),
         dateOfBirth: formData.dateOfBirth,
-        gender: selectedGender,
+        gender: selectedGender,           // ✅ selectedGender use ho raha hai
         phone: formData.phone,
         age: formData.age,
-        bloodType: formData.bloodType,
+        bloodType: formData.bloodType,    // ✅ user ki entered value
         height: formData.height,
         weight: formData.weight,
         allergies: formData.allergies || "None",
@@ -105,23 +103,22 @@ export default function EditProfile({ navigation = {}, route = {} }) {
         address: formData.address,
       };
 
-      const savedProfile = await updateProfile(updatedData);
+      await updateProfile(updatedData);
 
-      Alert.alert('Success! ✅', 'Profile updated successfully!', [
+      Alert.alert("Success! ✅", "Profile updated successfully!", [
         {
-          text: 'OK',
+          text: "OK",
           onPress: () => {
-            // ✅ FIX: Navigate with refresh=true param
             router.push({
-              pathname: '/Screens/MyProfile/MyProfile',
-              params: { refresh: 'true', timestamp: Date.now() }
+              pathname: "/Screens/MyProfile/MyProfile",
+              params: { refresh: "true", timestamp: Date.now() },
             });
-          }
-        }
+          },
+        },
       ]);
     } catch (error) {
-      console.error('Save error:', error);
-      Alert.alert('Error', error.message || 'Failed to update profile');
+      console.error("Save error:", error);
+      Alert.alert("Error", error.message || "Failed to update profile");
     } finally {
       setLoading(false);
     }
@@ -129,21 +126,21 @@ export default function EditProfile({ navigation = {}, route = {} }) {
 
   const handleCancel = () => {
     Alert.alert(
-      'Discard Changes?',
-      'Are you sure you want to discard your changes?',
+      "Discard Changes?",
+      "Are you sure you want to discard your changes?",
       [
-        { text: 'No', style: 'cancel' },
+        { text: "No", style: "cancel" },
         {
-          text: 'Yes',
-          style: 'destructive',
+          text: "Yes",
+          style: "destructive",
           onPress: () => {
             if (router.canGoBack()) {
               router.back();
             } else {
-              router.push('/Frontend/app/Screens/MyProfile/MyProfile');
+              router.push("/Screens/MyProfile/MyProfile");
             }
-          }
-        }
+          },
+        },
       ]
     );
   };
@@ -154,10 +151,7 @@ export default function EditProfile({ navigation = {}, route = {} }) {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={handleCancel}
-        >
+        <TouchableOpacity style={styles.backButton} onPress={handleCancel}>
           <ChevronLeft size={24} color="#111827" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Edit Profile</Text>
@@ -177,9 +171,12 @@ export default function EditProfile({ navigation = {}, route = {} }) {
             </View>
             <TouchableOpacity
               style={styles.editIconButton}
-              onPress={() => {
-                Alert.alert('Coming Soon', 'Profile photo upload will be available soon!');
-              }}
+              onPress={() =>
+                Alert.alert(
+                  "Coming Soon",
+                  "Profile photo upload will be available soon!"
+                )
+              }
             >
               <Edit2 size={16} color="#FFFFFF" />
             </TouchableOpacity>
@@ -215,74 +212,49 @@ export default function EditProfile({ navigation = {}, route = {} }) {
             />
           </View>
 
+          {/* ✅ FIX: Gender — user ki saved value highlight hogi */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Gender</Text>
-            <View style={styles.genderContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.genderButton,
-                  selectedGender === "Female" && styles.genderButtonActive,
-                ]}
-                onPress={() => {
-                  if (!loading) {
-                    setSelectedGender("Female");
-                    updateField("gender", "Female");
-                  }
-                }}
-                disabled={loading}
-              >
-                <View
-                  style={[
-                    styles.radioOuter,
-                    selectedGender === "Female" && styles.radioOuterActive,
-                  ]}
-                >
-                  {selectedGender === "Female" && (
-                    <View style={styles.radioInner} />
-                  )}
-                </View>
-                <Text
-                  style={[
-                    styles.genderText,
-                    selectedGender === "Female" && styles.genderTextActive,
-                  ]}
-                >
-                  Female
-                </Text>
-              </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[
-                  styles.genderButton,
-                  selectedGender === "Male" && styles.genderButtonActive,
-                ]}
-                onPress={() => {
-                  if (!loading) {
-                    setSelectedGender("Male");
-                    updateField("gender", "Male");
-                  }
-                }}
-                disabled={loading}
-              >
-                <View
+            {/* Agar abhi tak koi gender select nahi hua */}
+            {!selectedGender && (
+              <Text style={styles.genderHint}>Please select your gender</Text>
+            )}
+
+            <View style={styles.genderContainer}>
+              {["Male", "Female", "Other"].map((g) => (
+                <TouchableOpacity
+                  key={g}
                   style={[
-                    styles.radioOuter,
-                    selectedGender === "Male" && styles.radioOuterActive,
+                    styles.genderButton,
+                    selectedGender === g && styles.genderButtonActive,
                   ]}
+                  onPress={() => {
+                    if (!loading) {
+                      setSelectedGender(g);
+                      updateField("gender", g);
+                    }
+                  }}
+                  disabled={loading}
                 >
-                  {selectedGender === "Male" && (
-                    <View style={styles.radioInner} />
-                  )}
-                </View>
-                <Text
-                  style={[
-                    styles.genderText,
-                    selectedGender === "Male" && styles.genderTextActive,
-                  ]}
-                >
-                  Male
-                </Text>
-              </TouchableOpacity>
+                  <View
+                    style={[
+                      styles.radioOuter,
+                      selectedGender === g && styles.radioOuterActive,
+                    ]}
+                  >
+                    {selectedGender === g && <View style={styles.radioInner} />}
+                  </View>
+                  <Text
+                    style={[
+                      styles.genderText,
+                      selectedGender === g && styles.genderTextActive,
+                    ]}
+                  >
+                    {g}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
         </View>
@@ -313,9 +285,7 @@ export default function EditProfile({ navigation = {}, route = {} }) {
               value={formData.email}
               editable={false}
             />
-            <Text style={styles.helperText}>
-              Email cannot be changed
-            </Text>
+            <Text style={styles.helperText}>Email cannot be changed</Text>
           </View>
 
           <View style={styles.inputGroup}>
@@ -349,6 +319,7 @@ export default function EditProfile({ navigation = {}, route = {} }) {
               />
             </View>
 
+            {/* ✅ FIX: Blood Type — user ki value, koi hardcoded default nahi */}
             <View style={styles.halfInput}>
               <Text style={styles.label}>Blood Type</Text>
               <TextInput
@@ -421,7 +392,7 @@ export default function EditProfile({ navigation = {}, route = {} }) {
           </View>
         </View>
 
-        {/* Save Button */}
+        {/* Save & Cancel Buttons */}
         <View style={styles.buttonContainer}>
           <TouchableOpacity
             style={[styles.saveButton, loading && styles.saveButtonDisabled]}
@@ -485,6 +456,8 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+
+  // Profile section
   profileSection: {
     alignItems: "center",
     paddingVertical: 24,
@@ -520,6 +493,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#6B7280",
   },
+
+  // Section
   section: {
     backgroundColor: "#FFFFFF",
     padding: 16,
@@ -531,6 +506,8 @@ const styles = StyleSheet.create({
     color: "#111827",
     marginBottom: 16,
   },
+
+  // Inputs
   inputGroup: {
     marginBottom: 16,
   },
@@ -565,9 +542,17 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
     paddingTop: 12,
   },
+
+  // Gender
+  genderHint: {
+    fontSize: 12,
+    color: "#9CA3AF",
+    fontStyle: "italic",
+    marginBottom: 8,
+  },
   genderContainer: {
     flexDirection: "row",
-    gap: 12,
+    gap: 8,
   },
   genderButton: {
     flex: 1,
@@ -577,7 +562,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E7EB",
     borderRadius: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 10,
     paddingVertical: 12,
   },
   genderButtonActive: {
@@ -585,32 +570,34 @@ const styles = StyleSheet.create({
     borderColor: "#3B82F6",
   },
   radioOuter: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     borderWidth: 2,
     borderColor: "#D1D5DB",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 8,
+    marginRight: 6,
   },
   radioOuterActive: {
     borderColor: "#3B82F6",
   },
   radioInner: {
-    width: 10,
-    height: 10,
+    width: 9,
+    height: 9,
     borderRadius: 5,
     backgroundColor: "#3B82F6",
   },
   genderText: {
-    fontSize: 14,
+    fontSize: 13,
     color: "#6B7280",
   },
   genderTextActive: {
     color: "#3B82F6",
     fontWeight: "600",
   },
+
+  // Row inputs
   rowInputs: {
     flexDirection: "row",
     gap: 12,
@@ -619,6 +606,8 @@ const styles = StyleSheet.create({
   halfInput: {
     flex: 1,
   },
+
+  // Buttons
   buttonContainer: {
     paddingHorizontal: 16,
     paddingVertical: 16,

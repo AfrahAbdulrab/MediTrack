@@ -17,7 +17,6 @@ import { API_BASE_URL } from '../../constants/constants';
 
 const { width } = Dimensions.get("window");
 
-// ─── 10 minutes in milliseconds ──────────────────────────────────────────────
 const TEN_MINUTES = 10 * 60 * 1000;
 
 const getBMIStatus = (bmi) => {
@@ -51,7 +50,7 @@ export default function Vitals() {
   const {
     heartRate,
     lastHeartRateTime,
-    lastSyncedTime,     // ✅ NEW - Samsung Health ka actual last sync time
+    lastSyncedTime,
     spo2,
     steps,
     restingHeartRate,
@@ -60,83 +59,126 @@ export default function Vitals() {
     askPermissions,
   } = useWearData();
 
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [currentTime, setCurrentTime]       = useState(new Date());
   const [isWatchConnected, setIsWatchConnected] = useState(false);
-  const [lastSavedData, setLastSavedData] = useState(null);
+  const [lastSavedData, setLastSavedData]   = useState(null);
+  const [patientTemperature, setPatientTemperature] = useState(null);
   const [vitals, setVitals] = useState({
     heartRate: 0,
-    temperature: 98.6,
     oxygenLevel: 0,
     footsteps: 0,
     restingHeartRate: 0,
     bmi: null,
-    accelerometer: { x: 0, y: 9.8, z: 0, intensity: 'Still' },
+    accelerometer: { x: 0, y: 0, z: 0, intensity: 'Still' },
   });
 
-  // ✅ Watch connected check — agar last reading 10 min se purani ho toh Offline
+  // ── Mount pe reset ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const init = async () => {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        router.replace('/Screens/SignIn/SignIn');
+        return;
+      }
+      setVitals({
+        heartRate: 0,
+        oxygenLevel: 0,
+        footsteps: 0,
+        restingHeartRate: 0,
+        bmi: null,
+        accelerometer: { x: 0, y: 0, z: 0, intensity: 'Still' },
+      });
+      setLastSavedData(null);
+      setPatientTemperature(null);
+    };
+    init();
+  }, []);
+
+  // ── FIX 1: Correct endpoint — same as HomeScreen (/api/auth/profile) ───────
+  useEffect(() => {
+    const fetchPatientProfile = async () => {
+      try {
+        const token = await AsyncStorage.getItem('userToken');
+        if (!token) return;
+
+        // ✅ HomeScreen wala same endpoint use karo
+        const response = await fetch(`${API_BASE_URL}/api/auth/profile`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+
+        // ✅ HomeScreen wala same field path: data.user.vitals.temperature
+        if (data?.user?.vitals?.temperature) {
+          const tempF = parseFloat(data.user.vitals.temperature);
+          if (!isNaN(tempF) && tempF > 0) {
+            setPatientTemperature(tempF);
+          }
+        }
+      } catch (error) {
+        console.log('Profile fetch error:', error);
+      }
+    };
+    fetchPatientProfile();
+  }, []);
+
+  // ── FIX 2: Watch connection — heartRate directly check karo ───────────────
   useEffect(() => {
     const checkConnection = () => {
-      if (heartRate && lastHeartRateTime) {
+      // ✅ Agar heartRate aa raha hai toh directly connected — HomeScreen ki tarah
+      if (heartRate) {
+        setIsWatchConnected(true);
+        setVitals((prev) => ({
+          ...prev,
+          heartRate:        heartRate        || prev.heartRate,
+          oxygenLevel:      spo2             || prev.oxygenLevel,
+          footsteps:        steps            || prev.footsteps,
+          restingHeartRate: restingHeartRate || prev.restingHeartRate,
+          bmi:              bmi              || prev.bmi,
+          accelerometer:    accelerometer    || prev.accelerometer,
+        }));
+        saveVitalsToBackend(heartRate, spo2 || 0, steps || 0, restingHeartRate || 0);
+      } else if (lastHeartRateTime) {
+        // heartRate nahi mila lekin timestamp hai — time check karo
         const diffMs = new Date() - new Date(lastHeartRateTime);
         const isRecent = diffMs < TEN_MINUTES;
+        setIsWatchConnected(isRecent);
 
-        if (isRecent) {
-          setIsWatchConnected(true);
-          setVitals((prev) => ({
-            ...prev,
-            heartRate: heartRate,
-            oxygenLevel: spo2 || prev.oxygenLevel,
-            footsteps: steps || prev.footsteps,
-            restingHeartRate: restingHeartRate || prev.restingHeartRate,
-            bmi: bmi || prev.bmi,
-            accelerometer: accelerometer || prev.accelerometer,
-          }));
-          saveVitalsToBackend(heartRate, spo2 || 0, steps || 0, restingHeartRate || 0);
-        } else {
-          setIsWatchConnected(false);
-          setVitals((prev) => ({
-            ...prev,
-            heartRate: heartRate,
-            oxygenLevel: spo2 || prev.oxygenLevel,
-            footsteps: steps || prev.footsteps,
-            restingHeartRate: restingHeartRate || prev.restingHeartRate,
-            bmi: bmi || prev.bmi,
-            accelerometer: accelerometer || prev.accelerometer,
-          }));
-          fetchLastSavedVitals();
-        }
+        setVitals((prev) => ({
+          ...prev,
+          heartRate:        prev.heartRate,
+          oxygenLevel:      spo2             || prev.oxygenLevel,
+          footsteps:        steps            || prev.footsteps,
+          restingHeartRate: restingHeartRate || prev.restingHeartRate,
+          bmi:              bmi              || prev.bmi,
+          accelerometer:    accelerometer    || prev.accelerometer,
+        }));
+
+        if (!isRecent) fetchLastSavedVitals();
       } else {
+        // Kuch bhi nahi — disconnected
         setIsWatchConnected(false);
         fetchLastSavedVitals();
       }
     };
-
     checkConnection();
   }, [heartRate, lastHeartRateTime, spo2, steps, restingHeartRate, bmi, accelerometer]);
 
-  // ✅ Har minute connected status refresh
+  // ── Refresh connected status every minute ──────────────────────────────────
   useEffect(() => {
     const interval = setInterval(() => {
-      if (lastHeartRateTime) {
+      // Agar heartRate live aa raha hai toh connected rahega
+      if (heartRate) {
+        setIsWatchConnected(true);
+      } else if (lastHeartRateTime) {
         const diffMs = new Date() - new Date(lastHeartRateTime);
         setIsWatchConnected(diffMs < TEN_MINUTES);
       }
     }, 60 * 1000);
     return () => clearInterval(interval);
-  }, [lastHeartRateTime]);
+  }, [heartRate, lastHeartRateTime]);
 
-  // Temperature simulate
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setVitals((prev) => ({
-        ...prev,
-        temperature: Math.max(97, Math.min(99.5, prev.temperature + (Math.random() - 0.5) * 0.1)),
-      }));
-    }, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Clock
+  // ── Clock ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
@@ -151,7 +193,6 @@ export default function Vitals() {
         body: JSON.stringify({
           heartRate: hr,
           bloodOxygen: oxygen,
-          temperature: vitals.temperature,
           footsteps: stepsCount,
           restingHeartRate: rhr,
         }),
@@ -166,13 +207,13 @@ export default function Vitals() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
-      if (data.success) {
+      if (data.success && data.data) {
         setLastSavedData(data.data);
         setVitals((prev) => ({
           ...prev,
-          heartRate: data.data.heartRate || prev.heartRate,
-          oxygenLevel: data.data.bloodOxygen || prev.oxygenLevel,
-          footsteps: data.data.footsteps || prev.footsteps,
+          heartRate:        data.data.heartRate        || prev.heartRate,
+          oxygenLevel:      data.data.bloodOxygen      || prev.oxygenLevel,
+          footsteps:        data.data.footsteps        || prev.footsteps,
           restingHeartRate: data.data.restingHeartRate || prev.restingHeartRate,
         }));
       }
@@ -182,20 +223,28 @@ export default function Vitals() {
   const formatTime = () =>
     currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-  // ✅ UPDATED: lastSyncedTime ko priority do, fallback backend timestamp
   const formatLastSavedTime = (timestamp) => {
     if (!timestamp) return '';
     return new Date(timestamp).toLocaleString('en-US', {
-      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+      timeZone: 'Asia/Karachi',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
     });
   };
 
-  // ✅ Jo bhi latest ho — Samsung Health sync ya backend
   const displayTimestamp = lastSyncedTime ?? lastSavedData?.timestamp ?? null;
 
-  const bmiStatus = getBMIStatus(vitals.bmi);
-  const rhrStatus = getRHRStatus(vitals.restingHeartRate);
+  const bmiStatus  = getBMIStatus(vitals.bmi);
+  const rhrStatus  = getRHRStatus(vitals.restingHeartRate);
   const accelColor = getAccelColor(vitals.accelerometer?.intensity);
+
+  // ✅ FIX: Temperature display with °F unit
+  const temperatureDisplay = patientTemperature
+    ? patientTemperature.toFixed(1)
+    : '--';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -218,20 +267,12 @@ export default function Vitals() {
         </View>
       </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }}>
-
-        {/* ✅ Offline banner */}
-        {!isWatchConnected && (
-          <View style={styles.offlineBanner}>
-            <WifiOff size={16} color="#fff" />
-            <Text style={styles.offlineBannerText}>
-              Watch Not Connected — Showing Last Saved Data
-            </Text>
-          </View>
-        )}
-
-        {/* ✅ UPDATED: lastSyncedTime priority, fallback to backend timestamp */}
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100 }}
+      >
+        {/* Timestamp banner — sirf jab saved data ho */}
         {displayTimestamp && (
           <View style={styles.timestampBanner}>
             <Text style={styles.timestampText}>
@@ -247,47 +288,34 @@ export default function Vitals() {
               <Heart size={20} color="#EF4444" />
               <Text style={styles.heartRateTitle}>Heart Rate</Text>
             </View>
-            <View style={[styles.statusBadge, {
-              backgroundColor: isWatchConnected ? '#D1FAE5' : '#FEE2E2'
-            }]}>
-              <View style={[styles.statusDot, {
-                backgroundColor: isWatchConnected ? '#10B981' : '#EF4444'
-              }]} />
-              <Text style={[styles.statusBadgeText, {
-                color: isWatchConnected ? '#10B981' : '#EF4444'
-              }]}>
-                {isWatchConnected ? 'Live' : 'Offline'}
-              </Text>
-            </View>
+            {isWatchConnected && (
+              <View style={[styles.statusBadge, { backgroundColor: '#D1FAE5' }]}>
+                <View style={[styles.statusDot, { backgroundColor: '#10B981' }]} />
+                <Text style={[styles.statusBadgeText, { color: '#10B981' }]}>Live</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.heartRateDisplay}>
             <Text style={styles.heartRateValue}>{Math.round(vitals.heartRate) || 0}</Text>
             <Text style={styles.heartRateUnit}>BPM</Text>
           </View>
-
-          {/* ✅ UPDATED: displayTimestamp use karo */}
-          {!isWatchConnected && displayTimestamp && (
-            <View style={styles.offlineDataRow}>
-              <View style={styles.offlineDataBadge}>
-                <Text style={styles.offlineDataBadgeText}>OFFLINE</Text>
-              </View>
-              <Text style={styles.offlineDataTime}>
-                Data until: {formatLastSavedTime(displayTimestamp)}
-              </Text>
-            </View>
-          )}
         </View>
 
         {/* Temperature & Oxygen */}
         <View style={styles.statsGrid}>
+          {/* ✅ FIX: Temperature from /api/auth/profile → data.user.vitals.temperature */}
           <View style={[styles.statCard, { backgroundColor: '#FEF3C7' }]}>
             <View style={styles.statIconContainer}>
               <Thermometer size={24} color="#F59E0B" />
             </View>
-            <Text style={styles.statValue}>{vitals.temperature.toFixed(1)}°</Text>
+            <Text style={styles.statValue}>{temperatureDisplay}°</Text>
             <Text style={styles.statLabel}>Temperature</Text>
-            <View style={styles.statBadge}><Text style={styles.statBadgeText}>Normal</Text></View>
+            <View style={styles.statBadge}>
+              <Text style={styles.statBadgeText}>
+                {patientTemperature ? '°F · Profile' : 'N/A'}
+              </Text>
+            </View>
           </View>
 
           <View style={[styles.statCard, { backgroundColor: '#DBEAFE' }]}>
@@ -377,15 +405,15 @@ export default function Vitals() {
 
             <View style={styles.accelAxesRow}>
               {[
-                { label: 'X', color: '#EF4444', val: vitals.accelerometer?.x },
-                { label: 'Y', color: '#10B981', val: vitals.accelerometer?.y },
-                { label: 'Z', color: '#3B82F6', val: vitals.accelerometer?.z },
+                { label: 'X', color: '#EF4444', val: vitals.accelerometer?.x ?? 0 },
+                { label: 'Y', color: '#10B981', val: vitals.accelerometer?.y ?? 0 },
+                { label: 'Z', color: '#3B82F6', val: vitals.accelerometer?.z ?? 0 },
               ].map((axis, i) => (
                 <React.Fragment key={axis.label}>
                   {i > 0 && <View style={styles.accelAxisDivider} />}
                   <View style={styles.accelAxis}>
                     <Text style={[styles.accelAxisLabel, { color: axis.color }]}>{axis.label}</Text>
-                    <Text style={styles.accelAxisValue}>{axis.val?.toFixed(2) ?? '0.00'}</Text>
+                    <Text style={styles.accelAxisValue}>{axis.val.toFixed(2)}</Text>
                     <Text style={styles.accelUnit}>m/s²</Text>
                   </View>
                 </React.Fragment>
@@ -410,7 +438,7 @@ export default function Vitals() {
           </View>
         </View>
 
-        {/* ✅ UPDATED: Status Card — displayTimestamp use karo */}
+        {/* Bottom status card */}
         <View style={[styles.statusCard, {
           backgroundColor: isWatchConnected ? '#D1FAE5' : '#FEE2E2'
         }]}>
@@ -427,7 +455,7 @@ export default function Vitals() {
               ? `Live data — updated at ${formatTime()}`
               : displayTimestamp
                 ? `Last data: ${formatLastSavedTime(displayTimestamp)}`
-                : 'No saved data found'}
+                : 'Connect your watch to see live vitals'}
           </Text>
         </View>
 
@@ -475,10 +503,6 @@ const styles = StyleSheet.create({
   heartRateDisplay: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12 },
   heartRateValue: { fontSize: 72, fontWeight: 'bold', color: '#FFFFFF' },
   heartRateUnit: { fontSize: 20, fontWeight: '600', color: '#9CA3AF' },
-  offlineDataRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 8 },
-  offlineDataBadge: { backgroundColor: '#EF4444', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  offlineDataBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
-  offlineDataTime: { color: '#9CA3AF', fontSize: 12, fontWeight: '500' },
   statsGrid: { flexDirection: 'row', paddingHorizontal: 16, gap: 12, marginBottom: 12 },
   statCard: { flex: 1, borderRadius: 16, padding: 16, alignItems: 'center', elevation: 2 },
   statIconContainer: {

@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   Dimensions,
   Modal,
+  Linking,
+  AppState,
 } from "react-native";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -19,6 +21,10 @@ import {
   MapPin,
   Menu,
   ClipboardList,
+  Watch,
+  Bluetooth,
+  CheckCircle,
+  XCircle,
 } from "lucide-react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import Footer from '../components/Footer';
@@ -27,6 +33,12 @@ import { API_BASE_URL } from '../../constants/constants';
 import { syncHealthData } from '../../services/HealthService';
 import { useWearData } from '../../../hooks/useWearData';
 import { checkVitalsReminder } from '../../services/api';
+import {
+  getSdkStatus,
+  SdkAvailabilityStatus,
+  initialize,
+  readRecords,
+} from 'react-native-health-connect';
 
 const { width } = Dimensions.get("window");
 
@@ -37,7 +49,8 @@ export default function HomeScreen({ route }) {
   const router = useRouter();
   const params = useLocalSearchParams();
 
-  const { heartRate, spo2, steps, restingHeartRate } = useWearData();
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const { heartRate, spo2, steps, restingHeartRate } = useWearData(currentUserId);
 
   const [username, setUsername]       = useState("User");
   const [email, setEmail]             = useState("user@example.com");
@@ -48,9 +61,16 @@ export default function HomeScreen({ route }) {
   const [reminderVisible, setReminderVisible] = useState(false);
   const [reminderStatus, setReminderStatus]   = useState('normal');
 
+  const [pairingModalVisible, setPairingModalVisible] = useState(false);
+  const [pairingStep, setPairingStep]                 = useState('choose');
+  const [selectedOption, setSelectedOption]           = useState(null);
+  // ✅ Real pairing states
+  const [checkingConnection, setCheckingConnection]   = useState(false);
+  const [connectionResult, setConnectionResult]       = useState(null); // 'found' | 'notfound'
+
   const [vitals, setVitals] = useState({
     heartRate:   null,
-    temperature: null,  // ✅ null — backend se aayegi, hardcoded nahi
+    temperature: null,
     oxygenLevel: null,
     footsteps:   null,
   });
@@ -60,43 +80,195 @@ export default function HomeScreen({ route }) {
 
   // ─── On mount ────────────────────────────────────────────────────────────
   useEffect(() => {
-    loadUserData();
-    fetchLatestTemperature(); // ✅ App open hone pe temperature fetch karo
-    checkReminder();
-  }, []);
-
-  // ─── ✅ Temperature fetch from /api/vitals/latest ────────────────────────
-  // Jab user MyProfile mein temperature enter karta hai:
-  //   MyProfile → updateVitalSigns → POST /api/vitals/manual → VitalReadings mein save
-  // Yahan se wahi latest record uthate hain
-  const fetchLatestTemperature = async () => {
-    try {
+    const init = async () => {
       const token = await AsyncStorage.getItem('userToken');
-      if (!token) return;
-
-      const response = await fetch(`${VITALS_URL}/latest`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) return;
-
-      const data = await response.json();
-
-      if (data?.data?.temperature) {
-        // Backend Celsius mein save karta hai, HomeScreen °F mein dikhata hai
-        const tempC = parseFloat(data.data.temperature);
-        const tempF = parseFloat(((tempC * 9) / 5 + 32).toFixed(1));
-        setVitals(prev => ({ ...prev, temperature: tempF }));
-        console.log(`🌡️ Temperature: ${tempC}°C → ${tempF}°F`);
+      if (!token) {
+        router.replace('/Screens/SignIn/SignIn');
+        return;
       }
 
-    } catch (error) {
-      console.log('Temperature fetch error:', error.message);
-      // Error pe kuch mat karo — card mein "--" dikhega
+      setVitals({ heartRate: null, temperature: null, oxygenLevel: null, footsteps: null });
+      setVitalHistory([]);
+      setRecommendations([]);
+      setUsername('User');
+      setEmail('user@example.com');
+
+      const storedUserId = await AsyncStorage.getItem('userId');
+      if (storedUserId) setCurrentUserId(storedUserId);
+
+      loadUserData();
+      fetchLatestTemperature();
+      checkReminder();
+      checkPairingModal();
+    };
+    init();
+  }, []);
+
+  // ─── AppState listener — jab user Samsung Health se wapas aaye ──────────
+  // Ye "Pair New Watch" flow ke liye hai — user Samsung Health se pair karke
+  // wapas aata hai toh hum Health Connect check karte hain
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextState) => {
+      if (nextState === 'active' && pairingStep === 'waitingForSamsungHealth') {
+        // User wapas aaya Samsung Health se — ab check karo
+        console.log('📱 App active again — checking Health Connect...');
+        await checkHealthConnectData();
+      }
+    });
+    return () => subscription?.remove();
+  }, [pairingStep]);
+
+  // ─── Pairing modal — sirf isNewSignup pe dikhe ───────────────────────────
+  const checkPairingModal = async () => {
+    try {
+      const isNewSignup = await AsyncStorage.getItem('isNewSignup');
+      // ✅ Sirf naye signup pe dikhe — har login pe nahi
+      if (isNewSignup === 'true') {
+        await AsyncStorage.removeItem('isNewSignup');
+        setTimeout(() => setPairingModalVisible(true), 1000);
+      }
+    } catch (e) {
+      console.log('Pairing check error:', e.message);
     }
   };
 
-  // ─── Reminder check ───────────────────────────────────────────────────────
+  // ─── "Pair New Watch" handler — Samsung Health app kholo ────────────────
+  const handleNewPairing = async () => {
+    setSelectedOption('new');
+    setPairingStep('waitingForSamsungHealth');
+
+    // ✅ Samsung Health app kholo — user wahan watch pair kare
+    try {
+      // Samsung Health app ka package
+      const samsungHealthUrl = 'com.sec.android.app.shealth://';
+      const canOpen = await Linking.canOpenURL(samsungHealthUrl);
+
+      if (canOpen) {
+        await Linking.openURL(samsungHealthUrl);
+        console.log('✅ Samsung Health app khula');
+      } else {
+        // Samsung Health nahi hai — Play Store pe bhejo
+        await Linking.openURL('market://details?id=com.sec.android.app.shealth');
+        console.log('📲 Samsung Health Play Store pe bheja');
+      }
+    } catch (e) {
+      console.log('Samsung Health open error:', e.message);
+      // Fallback: Health Connect settings kholo
+      try {
+        await Linking.openURL('android.settings.HEALTH_CONNECT_SETTINGS');
+      } catch (e2) {
+        console.log('Health Connect settings error:', e2.message);
+      }
+    }
+  };
+
+  // ─── "Use Existing Watch" handler — Health Connect se check karo ─────────
+  const handleExistingPairing = async () => {
+    setSelectedOption('existing');
+    setPairingStep('checking');
+    setCheckingConnection(true);
+    await checkHealthConnectData();
+  };
+
+  // ✅ REAL CHECK: Health Connect mein data hai ya nahi
+  const checkHealthConnectData = async () => {
+    try {
+      setCheckingConnection(true);
+
+      const status = await getSdkStatus();
+      if (status !== SdkAvailabilityStatus.SDK_AVAILABLE) {
+        console.log('❌ Health Connect SDK not available');
+        setConnectionResult('notfound');
+        setPairingStep('result');
+        setCheckingConnection(false);
+        return;
+      }
+
+      const isInitialized = await initialize();
+      if (!isInitialized) {
+        setConnectionResult('notfound');
+        setPairingStep('result');
+        setCheckingConnection(false);
+        return;
+      }
+
+      // Last 24h mein koi HR data hai?
+      const now     = new Date();
+      const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+      const hrData  = await readRecords('HeartRate', {
+        timeRangeFilter: { operator: 'between', startTime: last24h, endTime: now.toISOString() },
+      });
+
+      if (hrData.records.length > 0) {
+        console.log('✅ Watch data mila — Health Connect mein HR records hain');
+        setConnectionResult('found');
+        await AsyncStorage.setItem('watchPaired', 'existing');
+        await AsyncStorage.setItem('watchName', 'Samsung Galaxy Watch');
+      } else {
+        console.log('⚠️ Health Connect mein koi recent HR data nahi');
+        setConnectionResult('notfound');
+      }
+
+      setPairingStep('result');
+    } catch (e) {
+      console.log('Health Connect check error:', e.message);
+      setConnectionResult('notfound');
+      setPairingStep('result');
+    } finally {
+      setCheckingConnection(false);
+    }
+  };
+
+  // ─── "Done" after pairing success ────────────────────────────────────────
+  const handlePairingDone = async () => {
+    await AsyncStorage.setItem('watchPaired', selectedOption || 'done');
+    setPairingModalVisible(false);
+    setPairingStep('choose');
+    setSelectedOption(null);
+    setConnectionResult(null);
+  };
+
+  const handleSkipPairing = async () => {
+    await AsyncStorage.setItem('watchPaired', 'skipped');
+    setPairingModalVisible(false);
+    setPairingStep('choose');
+    setSelectedOption(null);
+    setConnectionResult(null);
+  };
+
+  // ─── "Pair New Watch" wapas aane ke baad Done ────────────────────────────
+  const handleAfterSamsungHealth = async () => {
+    // User Samsung Health se wapas aaya — check karo
+    setPairingStep('checking');
+    await checkHealthConnectData();
+  };
+
+  // ─── Temperature fetch ───────────────────────────────────────────────────
+ const fetchLatestTemperature = async () => {
+  try {
+    const token = await AsyncStorage.getItem('userToken');
+    if (!token) return;
+
+    // ✅ Profile vitals se temperature lo — ye patient ki entered value hai
+    const response = await fetch(`${API_URL}/profile`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+
+    // Patient ne °F mein enter kiya hai — seedha show karo
+    if (data?.user?.vitals?.temperature) {
+      const tempF = parseFloat(data.user.vitals.temperature);
+      if (!isNaN(tempF) && tempF > 0) {
+        setVitals(prev => ({ ...prev, temperature: tempF }));
+      }
+    }
+  } catch (error) {
+    console.log('Temperature fetch error:', error.message);
+  }
+};
+
+  // ─── Reminder check ──────────────────────────────────────────────────────
   const checkReminder = async () => {
     try {
       const data = await checkVitalsReminder();
@@ -109,21 +281,18 @@ export default function HomeScreen({ route }) {
     }
   };
 
-  // ─── Load user profile ────────────────────────────────────────────────────
+  // ─── Load user profile ───────────────────────────────────────────────────
   const loadUserData = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
       if (!token) return;
-
       const response = await fetch(`${API_URL}/profile`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
-
       if (data?.user) {
         setUsername(data.user.username || data.user.name || 'User');
         setEmail(data.user.email || '');
-
         setSyncStatus('syncing');
         const profile = {
           name:   data.user.name,
@@ -132,15 +301,12 @@ export default function HomeScreen({ route }) {
           weight: parseFloat(data.user.weight) || 70,
           height: parseFloat(data.user.height) || 170,
         };
-
         await Promise.allSettled([
           syncHealthData(profile, 'Hypertension'),
           syncHealthData(profile, 'TachyBrady'),
           syncHealthData(profile, 'SleepApnea'),
         ]);
-
         setSyncStatus('done');
-        console.log('✅ Watch data synced!');
       }
     } catch (error) {
       setSyncStatus('error');
@@ -148,7 +314,7 @@ export default function HomeScreen({ route }) {
     }
   };
 
-  // ─── Watch data update ────────────────────────────────────────────────────
+  // ─── Watch data update ───────────────────────────────────────────────────
   useEffect(() => {
     if (heartRate) {
       setVitals(prev => ({
@@ -156,24 +322,26 @@ export default function HomeScreen({ route }) {
         heartRate:   heartRate,
         oxygenLevel: spo2  || prev.oxygenLevel,
         footsteps:   steps || prev.footsteps,
-        // ✅ temperature yahan nahi chherte — backend se aati hai
       }));
-
       setVitalHistory(h => [...h.slice(-20), {
         heartRate:   heartRate,
         oxygenLevel: spo2 || 99,
         footsteps:   steps || 0,
         timestamp:   Date.now(),
       }]);
+    } else {
+      setVitals(prev => ({
+        ...prev,
+        heartRate:   null,
+        oxygenLevel: null,
+        footsteps:   null,
+      }));
     }
   }, [heartRate, spo2, steps]);
 
-  // ─── ✅ Har 30 second mein temperature refresh ────────────────────────────
-  // Agar user MyProfile se temperature update karke wapas aaye to reflect ho
+  // ─── Temperature refresh every 30s ──────────────────────────────────────
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchLatestTemperature();
-    }, 30000);
+    const interval = setInterval(() => fetchLatestTemperature(), 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -195,9 +363,7 @@ export default function HomeScreen({ route }) {
   }, []);
 
   // ─── Health analysis ─────────────────────────────────────────────────────
-  useEffect(() => {
-    analyzeHealthStatus();
-  }, [vitals, vitalHistory]);
+  useEffect(() => { analyzeHealthStatus(); }, [vitals, vitalHistory]);
 
   const ranges = {
     heartRate:   { min: 60,   max: 100,   warning: { min: 50,   max: 110   } },
@@ -256,10 +422,148 @@ export default function HomeScreen({ route }) {
   };
 
   const getBadgeText = (status, type) => {
-    if (type === 'footsteps') {
-      return status === 'critical' ? 'Low' : status === 'warning' ? 'Fair' : 'Good';
-    }
+    if (type === 'footsteps') return status === 'critical' ? 'Low' : status === 'warning' ? 'Fair' : 'Good';
     return status === 'critical' ? 'Critical' : status === 'warning' ? 'Warning' : 'Normal';
+  };
+
+  // ─── Pairing Modal Content ───────────────────────────────────────────────
+  const renderPairingModal = () => {
+
+    // Step 1: Choose option
+    if (pairingStep === 'choose') {
+      return (
+        <>
+          <View style={styles.pairingIconCircle}>
+            <Watch size={36} color="#1E3C72" />
+          </View>
+          <Text style={styles.pairingTitle}>Connect Your Watch</Text>
+          <Text style={styles.pairingSubtitle}>
+            Pair your Samsung Galaxy Watch to start monitoring your health vitals in real-time.
+          </Text>
+          <TouchableOpacity style={styles.pairingOption} onPress={handleNewPairing}>
+            <View style={styles.pairingOptionIcon}>
+              <Bluetooth size={22} color="#667eea" />
+            </View>
+            <View style={styles.pairingOptionText}>
+              <Text style={styles.pairingOptionTitle}>Pair New Watch</Text>
+              <Text style={styles.pairingOptionDesc}>Opens Samsung Health to pair your watch</Text>
+            </View>
+            <Text style={styles.pairingArrow}>›</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.pairingOption} onPress={handleExistingPairing}>
+            <View style={[styles.pairingOptionIcon, { backgroundColor: '#D1FAE5' }]}>
+              <CheckCircle size={22} color="#10B981" />
+            </View>
+            <View style={styles.pairingOptionText}>
+              <Text style={styles.pairingOptionTitle}>Use Existing Watch</Text>
+              <Text style={styles.pairingOptionDesc}>Check if watch is already connected</Text>
+            </View>
+            <Text style={styles.pairingArrow}>›</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleSkipPairing} style={styles.pairingSkipBtn}>
+            <Text style={styles.pairingSkipText}>Skip for now</Text>
+          </TouchableOpacity>
+        </>
+      );
+    }
+
+    // Step 2a: Waiting for Samsung Health (Pair New Watch flow)
+    if (pairingStep === 'waitingForSamsungHealth') {
+      return (
+        <>
+          <View style={[styles.pairingIconCircle, { backgroundColor: '#EEF2FF' }]}>
+            <Bluetooth size={36} color="#667eea" />
+          </View>
+          <Text style={styles.pairingTitle}>Samsung Health Opened</Text>
+          <Text style={styles.pairingSubtitle}>
+            Please pair your Samsung Galaxy Watch in Samsung Health, then come back here and tap "Done".
+          </Text>
+          <View style={styles.instructionBox}>
+            <Text style={styles.instructionStep}>1. In Samsung Health → tap "+" or "Devices"</Text>
+            <Text style={styles.instructionStep}>2. Select your Galaxy Watch</Text>
+            <Text style={styles.instructionStep}>3. Complete pairing there</Text>
+            <Text style={styles.instructionStep}>4. Come back here and tap Done</Text>
+          </View>
+          <TouchableOpacity style={styles.pairingDoneBtn} onPress={handleAfterSamsungHealth}>
+            <Text style={styles.pairingDoneBtnText}>Done — Check Connection ✓</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleSkipPairing} style={styles.pairingSkipBtn}>
+            <Text style={styles.pairingSkipText}>Skip for now</Text>
+          </TouchableOpacity>
+        </>
+      );
+    }
+
+    // Step 2b: Checking Health Connect
+    if (pairingStep === 'checking') {
+      return (
+        <>
+          <View style={[styles.pairingIconCircle, { backgroundColor: '#EEF2FF' }]}>
+            <Activity size={36} color="#667eea" />
+          </View>
+          <Text style={styles.pairingTitle}>Checking Connection...</Text>
+          <Text style={styles.pairingSubtitle}>
+            Verifying your Samsung Galaxy Watch connection via Health Connect.
+          </Text>
+          <View style={styles.scanningDots}>
+            <View style={[styles.dot, { backgroundColor: '#667eea' }]} />
+            <View style={[styles.dot, { backgroundColor: '#667eea', opacity: 0.6 }]} />
+            <View style={[styles.dot, { backgroundColor: '#667eea', opacity: 0.3 }]} />
+          </View>
+        </>
+      );
+    }
+
+    // Step 3: Result
+    if (pairingStep === 'result') {
+      const isFound = connectionResult === 'found';
+      return (
+        <>
+          <View style={[styles.pairingIconCircle, {
+            backgroundColor: isFound ? '#D1FAE5' : '#FEE2E2'
+          }]}>
+            {isFound
+              ? <CheckCircle size={36} color="#10B981" />
+              : <XCircle    size={36} color="#EF4444" />
+            }
+          </View>
+          <Text style={styles.pairingTitle}>
+            {isFound ? '✅ Watch Connected!' : '⚠️ No Watch Data Found'}
+          </Text>
+          <Text style={styles.pairingSubtitle}>
+            {isFound
+              ? 'Your Samsung Galaxy Watch is connected and syncing data via Health Connect. Your vitals will update in real-time!'
+              : 'No recent watch data found in Health Connect. Make sure your watch is paired in Samsung Health and Health Connect has permission.'
+            }
+          </Text>
+
+          {isFound ? (
+            <TouchableOpacity style={styles.pairingDoneBtn} onPress={handlePairingDone}>
+              <Text style={styles.pairingDoneBtnText}>Start Monitoring 🚀</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={styles.pairingDoneBtn}
+                onPress={() => {
+                  // Samsung Health kholo taake user pair kare
+                  Linking.openURL('com.sec.android.app.shealth://').catch(() =>
+                    Linking.openURL('market://details?id=com.sec.android.app.shealth')
+                  );
+                  setPairingStep('waitingForSamsungHealth');
+                  setSelectedOption('new');
+                }}
+              >
+                <Text style={styles.pairingDoneBtnText}>Open Samsung Health</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleSkipPairing} style={styles.pairingSkipBtn}>
+                <Text style={styles.pairingSkipText}>Skip for now</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </>
+      );
+    }
   };
 
   return (
@@ -304,19 +608,19 @@ export default function HomeScreen({ route }) {
         {/* ── Device Status ── */}
         <View style={styles.deviceCard}>
           <View style={styles.deviceLeft}>
-            <View style={styles.deviceIcon}>
-              <Activity size={20} color="#10B981" />
+            <View style={[styles.deviceIcon, { backgroundColor: heartRate ? '#D1FAE5' : '#F3F4F6' }]}>
+              <Activity size={20} color={heartRate ? '#10B981' : '#9CA3AF'} />
             </View>
             <View>
               <Text style={styles.deviceTitle}>
-                {heartRate ? 'Device Connected' : 'Device Disconnected'}
+                {heartRate ? 'Device Connected' : 'No Device Connected'}
               </Text>
               <Text style={styles.deviceModel}>Samsung Galaxy Watch</Text>
             </View>
           </View>
           <View style={styles.liveIndicator}>
-            <View style={[styles.liveDot, { backgroundColor: heartRate ? '#10B981' : '#EF4444' }]} />
-            <Text style={[styles.liveText, { color: heartRate ? '#059669' : '#EF4444' }]}>
+            <View style={[styles.liveDot, { backgroundColor: heartRate ? '#10B981' : '#9CA3AF' }]} />
+            <Text style={[styles.liveText, { color: heartRate ? '#059669' : '#9CA3AF' }]}>
               {heartRate ? 'Live' : 'Offline'}
             </Text>
           </View>
@@ -351,7 +655,6 @@ export default function HomeScreen({ route }) {
           </View>
 
           <View style={styles.vitalsGrid}>
-
             {/* Heart Rate */}
             <View style={[styles.vitalCard, { borderColor: getStatusColor(getVitalStatus(vitals.heartRate, "heartRate")) }]}>
               <View style={styles.vitalHeader}>
@@ -365,7 +668,7 @@ export default function HomeScreen({ route }) {
               <Text style={styles.vitalUnit}>bpm</Text>
             </View>
 
-            {/* ✅ Temperature — Backend /api/vitals/latest se real value */}
+            {/* Temperature */}
             <View style={[styles.vitalCard, { borderColor: getStatusColor(getVitalStatus(vitals.temperature, "temperature")) }]}>
               <View style={styles.vitalHeader}>
                 <Thermometer size={20} color={getStatusColor(getVitalStatus(vitals.temperature, "temperature"))} />
@@ -405,7 +708,6 @@ export default function HomeScreen({ route }) {
               <Text style={styles.vitalLabel}>Footsteps</Text>
               <Text style={styles.vitalUnit}>steps/day</Text>
             </View>
-
           </View>
         </View>
 
@@ -457,6 +759,20 @@ export default function HomeScreen({ route }) {
       <Footer />
       <MenuDrawer visible={menuVisible} onClose={() => setMenuVisible(false)} navigation={router} />
 
+      {/* ── Watch Pairing Modal ── */}
+      <Modal
+        visible={pairingModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={handleSkipPairing}
+      >
+        <View style={styles.pairingOverlay}>
+          <View style={styles.pairingBox}>
+            {renderPairingModal()}
+          </View>
+        </View>
+      </Modal>
+
       {/* ── Vitals Reminder Popup ── */}
       <Modal
         visible={reminderVisible}
@@ -466,42 +782,28 @@ export default function HomeScreen({ route }) {
       >
         <View style={styles.reminderOverlay}>
           <View style={styles.reminderBox}>
-
             <View style={[styles.reminderIconCircle, {
               backgroundColor: reminderStatus === 'abnormal' ? '#FEE2E2' : '#DBEAFE'
             }]}>
               <ClipboardList size={32} color={reminderStatus === 'abnormal' ? '#EF4444' : '#3B82F6'} />
             </View>
-
             <Text style={styles.reminderTitle}>
               {reminderStatus === 'abnormal' ? '⚠️ Vitals Update Needed' : '📋 Time to Update Vitals'}
             </Text>
-
             <Text style={styles.reminderMessage}>
               {reminderStatus === 'abnormal'
-                ? 'Aapki last reading abnormal thi. Please apna Blood Pressure, Blood Sugar aur Temperature update karein.'
-                : 'Aapki daily vitals update ka waqt ho gaya hai. Please apni readings update karein.'}
+                ? 'Your last reading was abnormal. Please update your Blood Pressure, Blood Sugar, and Temperature.'
+                : 'It is time to update your daily vitals. Please update your readings.'}
             </Text>
-
             <TouchableOpacity
-              style={[styles.reminderUpdateBtn, {
-                backgroundColor: reminderStatus === 'abnormal' ? '#EF4444' : '#3B82F6'
-              }]}
-              onPress={() => {
-                setReminderVisible(false);
-                router.push('/Screens/MyProfile/MyProfile');
-              }}
+              style={[styles.reminderUpdateBtn, { backgroundColor: reminderStatus === 'abnormal' ? '#EF4444' : '#3B82F6' }]}
+              onPress={() => { setReminderVisible(false); router.push('/Screens/MyProfile/MyProfile'); }}
             >
               <Text style={styles.reminderUpdateBtnText}>Update Now</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.reminderLaterBtn}
-              onPress={() => setReminderVisible(false)}
-            >
+            <TouchableOpacity style={styles.reminderLaterBtn} onPress={() => setReminderVisible(false)}>
               <Text style={styles.reminderLaterBtnText}>Later</Text>
             </TouchableOpacity>
-
           </View>
         </View>
       </Modal>
@@ -511,71 +813,94 @@ export default function HomeScreen({ route }) {
 }
 
 const styles = StyleSheet.create({
-  container:            { flex: 1, backgroundColor: "#d1e6f6ff" },
-  header:               { backgroundColor: "#1E3C72", paddingHorizontal: 16, paddingTop: 44, paddingBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  headerLeft:           { flexDirection: "row", alignItems: "center", gap: 10 },
-  menuButton:           { backgroundColor: "rgba(255,255,255,0.25)", borderRadius: 18, padding: 7 },
-  headerTitle:          { fontSize: 18, fontWeight: "bold", color: "#FFF" },
-  headerSubtitle:       { fontSize: 10, color: "#E0E7FF" },
-  headerRight:          { alignItems: "flex-end" },
-  timeText:             { fontSize: 13, fontWeight: "600", color: "#FFF" },
-  onlineText:           { fontSize: 11, color: "#E0E7FF" },
-  scrollView:           { flex: 1 },
-  contentContainer:     { padding: 16, paddingBottom: 100 },
-  welcomeCard:          { backgroundColor: "#FFF", borderRadius: 12, padding: 16, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 16, elevation: 2 },
-  avatar:               { width: 48, height: 48, borderRadius: 24, backgroundColor: "#DBEAFE", alignItems: "center", justifyContent: "center" },
-  avatarText:           { fontSize: 24, fontWeight: "bold", color: "#2563EB" },
-  welcomeTextContainer: { flex: 1 },
-  welcomeName:          { fontSize: 16, fontWeight: "600", color: "#111827" },
-  welcomeDate:          { fontSize: 14, color: "#6B7280" },
-  deviceCard:           { backgroundColor: "#FFF", borderRadius: 12, padding: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16, elevation: 2 },
-  deviceLeft:           { flexDirection: "row", alignItems: "center", gap: 12 },
-  deviceIcon:           { width: 40, height: 40, borderRadius: 20, backgroundColor: "#D1FAE5", alignItems: "center", justifyContent: "center" },
-  deviceTitle:          { fontSize: 16, fontWeight: "600", color: "#111827" },
-  deviceModel:          { fontSize: 12, color: "#6B7280" },
-  liveIndicator:        { flexDirection: "row", alignItems: "center", gap: 8 },
-  liveDot:              { width: 8, height: 8, borderRadius: 4 },
-  liveText:             { fontSize: 14, fontWeight: "600" },
-  statusCard:           { borderRadius: 12, padding: 16, marginBottom: 16, elevation: 3 },
-  statusContent:        { flexDirection: "row", justifyContent: "space-between", marginBottom: 12 },
-  statusLeft:           { flex: 1 },
-  statusHeader:         { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
-  statusTitle:          { fontSize: 18, fontWeight: "bold", color: "#FFF" },
-  statusText:           { fontSize: 14, color: "rgba(255,255,255,0.9)" },
-  statusTime:           { fontSize: 12, color: "rgba(255,255,255,0.75)" },
-  vitalsSection:        { marginBottom: 16 },
-  vitalsSectionHeader:  { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  vitalsTitle:          { fontSize: 16, fontWeight: "bold", color: "#111827" },
-  realtimeIndicator:    { flexDirection: "row", alignItems: "center", gap: 4 },
-  realtimeDot:          { width: 8, height: 8, borderRadius: 4 },
-  realtimeText:         { fontSize: 12, color: "#6B7280" },
-  vitalsGrid:           { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  vitalCard:            { width: (width - 44) / 2, backgroundColor: "#FFF", borderRadius: 12, padding: 16, borderWidth: 2, elevation: 2 },
-  vitalHeader:          { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  statusBadge:          { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
-  statusBadgeText:      { fontSize: 10, fontWeight: "600", color: "#FFF" },
-  vitalValue:           { fontSize: 32, fontWeight: "bold", color: "#111827" },
-  vitalLabel:           { fontSize: 14, color: "#4B5563" },
-  vitalUnit:            { fontSize: 12, color: "#6B7280", marginTop: 4 },
-  recommendationsCard:  { backgroundColor: "#FFF", borderRadius: 12, padding: 16, marginBottom: 16, elevation: 2 },
-  recommendationsHeader:{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
-  recommendationsTitle: { fontSize: 16, fontWeight: "bold", color: "#111827" },
-  recommendationsList:  { gap: 8 },
-  recommendationItem:   { padding: 12, borderRadius: 8, borderLeftWidth: 4 },
-  recommendationText:   { fontSize: 14, color: "#374151" },
-  actionsSection:       { marginBottom: 16 },
-  actionsTitle:         { fontSize: 16, fontWeight: "bold", color: "#111827", marginBottom: 12 },
-  actionsGrid:          { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  actionButton:         { width: (width - 44) / 2, borderRadius: 12, padding: 16, alignItems: "center", gap: 8, elevation: 3 },
-  actionButtonTitle:    { fontSize: 14, fontWeight: "600", color: "#FFF", textAlign: "center" },
-  actionButtonSubtitle: { fontSize: 12, color: "rgba(255,255,255,0.9)" },
-  reminderOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
-  reminderBox:          { backgroundColor: '#FFF', borderRadius: 20, padding: 24, width: '100%', alignItems: 'center', elevation: 10 },
-  reminderIconCircle:   { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
-  reminderTitle:        { fontSize: 18, fontWeight: '700', color: '#111827', marginBottom: 10, textAlign: 'center' },
-  reminderMessage:      { fontSize: 14, color: '#6B7280', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
-  reminderUpdateBtn:    { width: '100%', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 },
-  reminderUpdateBtnText:{ color: '#FFF', fontSize: 16, fontWeight: '700' },
-  reminderLaterBtn:     { width: '100%', paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#F3F4F6' },
-  reminderLaterBtnText: { color: '#6B7280', fontSize: 15, fontWeight: '600' },
+  container:             { flex: 1, backgroundColor: "#d1e6f6ff" },
+  header:                { backgroundColor: "#1E3C72", paddingHorizontal: 16, paddingTop: 44, paddingBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  headerLeft:            { flexDirection: "row", alignItems: "center", gap: 10 },
+  menuButton:            { backgroundColor: "rgba(255,255,255,0.25)", borderRadius: 18, padding: 7 },
+  headerTitle:           { fontSize: 18, fontWeight: "bold", color: "#FFF" },
+  headerSubtitle:        { fontSize: 10, color: "#E0E7FF" },
+  headerRight:           { alignItems: "flex-end" },
+  timeText:              { fontSize: 13, fontWeight: "600", color: "#FFF" },
+  onlineText:            { fontSize: 11, color: "#E0E7FF" },
+  scrollView:            { flex: 1 },
+  contentContainer:      { padding: 16, paddingBottom: 100 },
+  welcomeCard:           { backgroundColor: "#FFF", borderRadius: 12, padding: 16, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 16, elevation: 2 },
+  avatar:                { width: 48, height: 48, borderRadius: 24, backgroundColor: "#DBEAFE", alignItems: "center", justifyContent: "center" },
+  avatarText:            { fontSize: 24, fontWeight: "bold", color: "#2563EB" },
+  welcomeTextContainer:  { flex: 1 },
+  welcomeName:           { fontSize: 16, fontWeight: "600", color: "#111827" },
+  welcomeDate:           { fontSize: 14, color: "#6B7280" },
+  deviceCard:            { backgroundColor: "#FFF", borderRadius: 12, padding: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16, elevation: 2 },
+  deviceLeft:            { flexDirection: "row", alignItems: "center", gap: 12 },
+  deviceIcon:            { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  deviceTitle:           { fontSize: 16, fontWeight: "600", color: "#111827" },
+  deviceModel:           { fontSize: 12, color: "#6B7280" },
+  liveIndicator:         { flexDirection: "row", alignItems: "center", gap: 8 },
+  liveDot:               { width: 8, height: 8, borderRadius: 4 },
+  liveText:              { fontSize: 14, fontWeight: "600" },
+  statusCard:            { borderRadius: 12, padding: 16, marginBottom: 16, elevation: 3 },
+  statusContent:         { flexDirection: "row", justifyContent: "space-between", marginBottom: 12 },
+  statusLeft:            { flex: 1 },
+  statusHeader:          { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
+  statusTitle:           { fontSize: 18, fontWeight: "bold", color: "#FFF" },
+  statusText:            { fontSize: 14, color: "rgba(255,255,255,0.9)" },
+  statusTime:            { fontSize: 12, color: "rgba(255,255,255,0.75)" },
+  vitalsSection:         { marginBottom: 16 },
+  vitalsSectionHeader:   { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  vitalsTitle:           { fontSize: 16, fontWeight: "bold", color: "#111827" },
+  realtimeIndicator:     { flexDirection: "row", alignItems: "center", gap: 4 },
+  realtimeDot:           { width: 8, height: 8, borderRadius: 4 },
+  realtimeText:          { fontSize: 12, color: "#6B7280" },
+  vitalsGrid:            { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  vitalCard:             { width: (width - 44) / 2, backgroundColor: "#FFF", borderRadius: 12, padding: 16, borderWidth: 2, elevation: 2 },
+  vitalHeader:           { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  statusBadge:           { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
+  statusBadgeText:       { fontSize: 10, fontWeight: "600", color: "#FFF" },
+  vitalValue:            { fontSize: 32, fontWeight: "bold", color: "#111827" },
+  vitalLabel:            { fontSize: 14, color: "#4B5563" },
+  vitalUnit:             { fontSize: 12, color: "#6B7280", marginTop: 4 },
+  recommendationsCard:   { backgroundColor: "#FFF", borderRadius: 12, padding: 16, marginBottom: 16, elevation: 2 },
+  recommendationsHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
+  recommendationsTitle:  { fontSize: 16, fontWeight: "bold", color: "#111827" },
+  recommendationsList:   { gap: 8 },
+  recommendationItem:    { padding: 12, borderRadius: 8, borderLeftWidth: 4 },
+  recommendationText:    { fontSize: 14, color: "#374151" },
+  actionsSection:        { marginBottom: 16 },
+  actionsTitle:          { fontSize: 16, fontWeight: "bold", color: "#111827", marginBottom: 12 },
+  actionsGrid:           { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  actionButton:          { width: (width - 44) / 2, borderRadius: 12, padding: 16, alignItems: "center", gap: 8, elevation: 3 },
+  actionButtonTitle:     { fontSize: 14, fontWeight: "600", color: "#FFF", textAlign: "center" },
+  actionButtonSubtitle:  { fontSize: 12, color: "rgba(255,255,255,0.9)" },
+
+  // ── Pairing Modal ──
+  pairingOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  pairingBox:          { backgroundColor: '#FFF', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 28, paddingBottom: 40, alignItems: 'center' },
+  pairingIconCircle:   { width: 72, height: 72, borderRadius: 36, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
+  pairingTitle:        { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 8, textAlign: 'center' },
+  pairingSubtitle:     { fontSize: 14, color: '#6B7280', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  pairingOption:       { flexDirection: 'row', alignItems: 'center', width: '100%', backgroundColor: '#F9FAFB', borderRadius: 14, padding: 16, marginBottom: 12, borderWidth: 1.5, borderColor: '#E5E7EB' },
+  pairingOptionIcon:   { width: 44, height: 44, borderRadius: 12, backgroundColor: '#EEF2FF', justifyContent: 'center', alignItems: 'center', marginRight: 14 },
+  pairingOptionText:   { flex: 1 },
+  pairingOptionTitle:  { fontSize: 15, fontWeight: '600', color: '#111827' },
+  pairingOptionDesc:   { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  pairingArrow:        { fontSize: 22, color: '#9CA3AF', fontWeight: '300' },
+  pairingSkipBtn:      { marginTop: 8, paddingVertical: 10 },
+  pairingSkipText:     { fontSize: 14, color: '#9CA3AF', textDecorationLine: 'underline' },
+  pairingDoneBtn:      { backgroundColor: '#1E3C72', width: '100%', paddingVertical: 15, borderRadius: 14, alignItems: 'center', marginTop: 8 },
+  pairingDoneBtnText:  { color: '#FFF', fontSize: 16, fontWeight: '700' },
+  scanningDots:        { flexDirection: 'row', gap: 10, marginTop: 16 },
+  dot:                 { width: 12, height: 12, borderRadius: 6 },
+  instructionBox:      { width: '100%', backgroundColor: '#F0F9FF', borderRadius: 12, padding: 16, marginBottom: 20, gap: 8 },
+  instructionStep:     { fontSize: 14, color: '#1E3C72', lineHeight: 22 },
+
+  // ── Reminder Modal ──
+  reminderOverlay:       { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
+  reminderBox:           { backgroundColor: '#FFF', borderRadius: 20, padding: 24, width: '100%', alignItems: 'center', elevation: 10 },
+  reminderIconCircle:    { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
+  reminderTitle:         { fontSize: 18, fontWeight: '700', color: '#111827', marginBottom: 10, textAlign: 'center' },
+  reminderMessage:       { fontSize: 14, color: '#6B7280', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  reminderUpdateBtn:     { width: '100%', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 },
+  reminderUpdateBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
+  reminderLaterBtn:      { width: '100%', paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#F3F4F6' },
+  reminderLaterBtnText:  { color: '#6B7280', fontSize: 15, fontWeight: '600' },
 });
